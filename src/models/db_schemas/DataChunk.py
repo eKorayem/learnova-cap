@@ -9,7 +9,7 @@ class DataChunk(BaseModel):
     chunk_order: int = Field(..., gt=0)
     project_id: str  # business ID (same as Project.project_id)
     chunk_asset_id: ObjectId
-    # chunk_project_id: ObjectId
+    chunk_project_id: ObjectId
 
     
     # To make pydantic ignore ObjectId or any unkown data type.
@@ -26,6 +26,13 @@ class DataChunk(BaseModel):
                     ("chunk_project_id", 1)
                 ],
                 "name": "chunk_project_id_index_1",
+                "unique": False
+            },
+            {
+                "key": [
+                    ("project_id", 1)  # Index on string business ID
+                ],
+                "name": "project_id_index_1",
                 "unique": False
             }
         ]

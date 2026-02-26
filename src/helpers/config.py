@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     INPUT_DAFAULT_MAX_CHARACTERS: int = None
     GENERATION_DAFAULT_MAX_TOKENS: int = None
-    GENERATION_DAFAULT_TEMPERATURE: int = None
+    GENERATION_DAFAULT_TEMPERATURE: float = None
     
     VECTOR_DB_BACKEND: str
     VECTOR_DB_PATH: str

@@ -1,7 +1,7 @@
 from ..LLMInterface import LLMInterface
 import logging
 
-class LocalProvider(LLMInterface):
+class SentenceTransformerProvider(LLMInterface):
     def __init__(self, 
                  api_key: str = None,  # Not used, but kept for interface consistency
                  defualt_input_max_characters: int = 1000, 
