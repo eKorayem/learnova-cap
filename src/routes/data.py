@@ -89,7 +89,7 @@ async def upload_data(
     return JSONResponse(
         content={
             "signal" : ResponseSignal.FILE_UPLOAD_SUCCESS.value,
-            "file_id" : asset_record.id,
+            "file_id" : str(asset_record.id),
             # "file_name_id": file_id,
             # "project_id" : str(project.id)
         }
@@ -189,7 +189,8 @@ async def process_endpoint(request: Request, project_id: str, process_request: P
                 chunk_text=chunk.page_content,
                 chunk_metadata=chunk.metadata,
                 chunk_order=i+1,
-                project_id=project.project_id,
+                project_id=project.project_id,     # String business ID
+                chunk_project_id=project.id,       # ObjectId (ADD THIS)
                 chunk_asset_id= asset_id
             )
             for i, chunk in enumerate(file_chunks)

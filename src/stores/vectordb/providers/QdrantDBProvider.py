@@ -68,6 +68,7 @@ class QdrantDBProvider(VectorDBInterface):
                 collection_name=collection_name,
                 records=[
                     models.Record(
+                        id=[recored_id],
                         vector=vector,
                         payload={
                             "text" : text,
@@ -87,13 +88,13 @@ class QdrantDBProvider(VectorDBInterface):
         
     def insert_many(self, collection_name: str, texts: List[str],
                     vectors: List[list], metadatas: List[dict]=None, 
-                    recored_ids: List[str]=None, batch_size: int=50):
+                    record_ids: List[str]=None, batch_size: int=50):
         
         if metadatas is None:
             metadatas = [None] * len(texts)
         
-        if recored_ids is None:
-            recored_ids = [None] * len(texts)
+        if record_ids is None:
+            record_ids = list(range(0, len(texts)))
         
         for i in range(0, len(texts), batch_size):
             batch_end = i+batch_size
@@ -101,10 +102,13 @@ class QdrantDBProvider(VectorDBInterface):
             batch_texts = texts[i:batch_end]
             batch_vectors = vectors[i:batch_end]
             batch_metadatas = metadatas[i:batch_end]
+            batch_record_ids = record_ids[i:batch_end]
             
             batch_records = [
                 
                 models.Record(
+                    # id=[batch_record_ids[x]],
+                    id=batch_record_ids[x],
                     vector=batch_vectors[x],
                     payload={
                         "text" : batch_texts[x],
@@ -126,10 +130,12 @@ class QdrantDBProvider(VectorDBInterface):
         return True
     
     def search_by_vector(self, collection_name: str,
-                         query_vector: list,
-                         limit: int=5) -> List[dict]:
+                     vector: list,
+                     limit: int=5) -> List[dict]:
+    
+
         return self.client.search(
             collection_name=collection_name,
-            query_vector=query_vector,
+            query_vector=vector, 
             limit=limit
         )

@@ -74,3 +74,34 @@ class ChunkModel(BaseDataModel):
             "project_id": project_id  # string business ID
         })
         return result.deleted_count
+    
+    async def get_chunks_by_project_id(self, project_id: str, page_no: int=1, page_size: int = 50) -> list[DataChunk]:
+        skip = (page_no - 1) * page_size
+        cursor = self.collection.find(
+            {"project_id": project_id}
+        ).skip(skip).limit(page_size)
+
+        chunks = []
+        async for record in cursor:
+            chunks.append(DataChunk(**record))
+
+        return chunks
+    
+    async def get_chunks_by_project_object_id(
+        self,
+        chunk_project_id: ObjectId,
+        page_no: int = 1,
+        page_size: int = 100
+    ) -> list[DataChunk]:
+        """Get chunks by MongoDB ObjectId"""
+        skip = (page_no - 1) * page_size
+        
+        cursor = self.collection.find(
+            {"chunk_project_id": chunk_project_id}
+        ).skip(skip).limit(page_size)
+        
+        chunks = []
+        async for doc in cursor:
+            chunks.append(DataChunk(**doc))
+        
+        return chunks

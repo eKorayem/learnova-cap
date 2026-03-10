@@ -1,7 +1,7 @@
 notes.md
 project_code.md
 export_py_to_md.py
-
+srcc/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
