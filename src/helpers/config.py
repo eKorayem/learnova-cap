@@ -9,12 +9,12 @@ class Settings(BaseSettings):
     FILE_ALLOWED_TYPES: list
     FILE_ALLOWED_SIZE: int
     FILE_DEFAULT_CHUNK_SIZE: int
-    
+
     MONGODB_URL: str
     MONGODB_DATABASE: str
-    
+
     # ======================= LLM CONFIG =======================
-    
+
     GENERATION_BACKEND : str
     EMBEDDING_BACKEND : str
 
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     OPENAI_API_URL: str = None
     COHERE_API_KEY: str = None
     GROQ_API_KEY: str = None
-    
+
 
     GENERATION_MODEL_ID: str = None
     EMBEDDING_MODEL_ID: str = None
@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     INPUT_DAFAULT_MAX_CHARACTERS: int = None
     GENERATION_DAFAULT_MAX_TOKENS: int = None
     GENERATION_DAFAULT_TEMPERATURE: float = None
+
+    # ======================= Chunking Config =======================
+
+    RAG_CHUNK_SIZE: int = 100
+    RAG_OVERLAP_SIZE: int = 20
+    STRUCTURE_CHUNK_SIZE: int = 1000
+    STRUCTURE_OVERLAP_SIZE: int = 100
     
 
     # ======================= VectorDB CONFIG =======================

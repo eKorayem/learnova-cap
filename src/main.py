@@ -13,7 +13,8 @@ app = FastAPI()
 # @app.on_event("startup")
 async def startup_span():
     settings = get_settings()
-    
+
+    app.settings = settings  # Make settings available to routes
     app.mongo_conn = AsyncIOMotorClient(settings.MONGODB_URL)
     app.db_client = app.mongo_conn[settings.MONGODB_DATABASE]
     

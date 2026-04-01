@@ -4,8 +4,9 @@ from typing import List, Optional
 
 class AnalyzeStructureRequest(BaseModel):
     project_id: str
-    lecture_id: Optional[str] = None  # ← Make it optional
-    max_topics: Optional[int] = None  # Limit number of topics
+    lecture_id: Optional[str] = None
+    max_topics: Optional[int] = None
+    use_all_chunks: Optional[bool] = False  # Use all chunks for better accuracy (slower)
 
 
 class SubtitleResponse(BaseModel):
