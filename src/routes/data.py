@@ -98,10 +98,11 @@ async def upload_data(
     
 @data_router.post("/process/{project_id}")
 async def process_endpoint(request: Request, project_id: str, process_request: ProcessRequest):
-    
+
     # file_id = process_request.file_id
-    chunk_size = process_request.chunk_size
-    overlap_size = process_request.overlap_size
+    # Use config defaults if not provided in request
+    chunk_size = process_request.chunk_size or request.app.settings.RAG_CHUNK_SIZE
+    overlap_size = process_request.overlap_size or request.app.settings.RAG_OVERLAP_SIZE
     do_reset = process_request.do_reset
     
     asset_model = await AssetModel.create_instance(db_client=request.app.db_client)

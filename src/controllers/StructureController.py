@@ -16,111 +16,110 @@ class StructureController(BaseController):
     
     
     async def analyze_lecture_structure(
-        self, 
+        self,
         chunk_model: ChunkModel,
         project_id: str,
-        max_topics: int = None
+        max_topics: int = None,
+        use_all_chunks: bool = False
     ):
         """
         Analyze chunks and extract topics/subtitles structure
+
+        Key improvements:
+        1. Reconstructs continuous text from chunks (preserves topic boundaries)
+        2. Smart truncation at chunk boundaries (not mid-topic)
+        3. Optional full-document mode for better accuracy
         """
-        
+
         # 1. Get all chunks
         chunks = await chunk_model.get_chunks_by_project_id(
             project_id=project_id,
             page_no=1,
             page_size=1000
         )
-        
+
         if not chunks:
             self.logger.error(f"No chunks found for project {project_id}")
             return None
-        
+
+        # Sort by chunk_order to ensure correct sequence
+        chunks = sorted(chunks, key=lambda c: c.chunk_order)
+
         total_chunks = len(chunks)
         self.logger.info(f"Analyzing {total_chunks} chunks")
-        
-        # 2. Adaptive sampling based on document size
-        if total_chunks <= 30:
-            # Short document (slides, article) - use all
-            sampled_chunks = chunks
-            self.logger.info("Short document: using all chunks")
-            
-        elif total_chunks <= 100:
-            # Medium document (lecture notes) - use first 80%
-            sampled_chunks = chunks[:int(total_chunks * 0.8)]
-            self.logger.info(f"Medium document: using first {len(sampled_chunks)} chunks")
-            
+
+        # 2. Select chunks - prioritize continuity over coverage
+        if use_all_chunks or total_chunks <= 50:
+            # Use all chunks for short-medium documents
+            selected_chunks = chunks
+            self.logger.info(f"Using all {len(selected_chunks)} chunks")
         else:
-            # Long document (book) - intelligent sampling
-            # Take from beginning, multiple middle points, and end
-            sample_size = 30
-            num_samples = 4  # Beginning + 2 middle + end
-            
-            sampled_chunks = []
-            # Beginning
-            sampled_chunks.extend(chunks[:sample_size])
-            
-            # Middle samples
-            mid1 = total_chunks // 3
-            mid2 = (2 * total_chunks) // 3
-            sampled_chunks.extend(chunks[mid1:mid1+sample_size])
-            sampled_chunks.extend(chunks[mid2:mid2+sample_size])
-            
-            # End
-            sampled_chunks.extend(chunks[-sample_size:])
-            
-            self.logger.info(f"Long document: sampled {len(sampled_chunks)} from {total_chunks} chunks")
-        
-        # 3. Create text from samples
-        full_text = "\n\n".join([c.chunk_text for c in sampled_chunks])
-        
-        # 4. Limit to max input characters
+            # For long documents: take continuous blocks, not scattered samples
+            # This preserves topic boundaries and context
+            max_chunks = 50  # Limit to avoid token overflow
+
+            # Strategy: Take first 60% + last 40% as two continuous blocks
+            # This captures intro/topics + conclusion/summary
+            first_block_size = int(max_chunks * 0.6)
+            last_block_size = max_chunks - first_block_size
+
+            selected_chunks = chunks[:first_block_size] + chunks[-last_block_size:]
+            self.logger.info(f"Selected {len(selected_chunks)} chunks (first {first_block_size} + last {last_block_size})")
+
+        # 3. Reconstruct continuous text from chunks
+        # Join with minimal separator to preserve original flow
+        full_text = "\n".join([c.chunk_text for c in selected_chunks])
+
+        # 4. Smart truncation at paragraph/chunk boundaries
         max_chars = self.app_settings.INPUT_DAFAULT_MAX_CHARACTERS
         if len(full_text) > max_chars:
-            full_text = full_text[:max_chars]
-            self.logger.info(f"Truncated text to {max_chars} characters")
-        
+            # Find last complete paragraph before limit
+            truncated = full_text[:max_chars]
+            last_break = truncated.rfind("\n\n")
+            if last_break > max_chars * 0.8:  # Only if we don't lose too much
+                full_text = truncated[:last_break]
+            else:
+                full_text = truncated
+            self.logger.info(f"Truncated text to {len(full_text)} characters at boundary")
+
+        self.logger.info(f"Final text length: {len(full_text)} chars from {len(selected_chunks)} chunks")
+
         # 5. Build prompt and analyze
         prompt = self._build_structure_prompt(full_text, max_topics)
-        
+
         try:
             response = self.generation_client.generate_text(
                 prompt=prompt,
                 temperature=self.app_settings.GENERATION_DAFAULT_TEMPERATURE,
                 max_output_tokens=self.app_settings.GENERATION_DAFAULT_MAX_TOKENS
             )
-            
+
             structure = self._parse_structure_response(response)
-            
+
             if structure and "topics" in structure:
                 self.logger.info(f"Successfully extracted {len(structure['topics'])} topics")
-            
+
             return structure
-            
+
         except Exception as e:
             self.logger.error(f"Error analyzing structure: {e}")
             return None
     
     def _build_structure_prompt(self, text: str, max_topics: int=None) -> str:
         """Build prompt for structure analysis"""
-        
-        # Start the JSON for the model
-        prompt = f"""You are an academic document structure extractor.
 
-Extract the structure from this document.
+        # Build max_topics rule if specified
+        max_topics_rule = f"Limit to {max_topics} topics maximum.\n" if max_topics else ""
 
-Rules:
-1. Identify main topics (major sections)
-2. Under each topic, extract subtopics
-3. Use exact wording from the document
-4. Do not invent content
-5. Return ONLY valid JSON, no explanations
+        # Improved prompt with clearer instructions and examples
+        prompt = f"""You are a document structure extractor. Extract topics and subtitles from the document.
 
-Required JSON format:
+RULES:
+1. Output ONLY valid JSON with this exact structure:
 {{
   "topics": [
     {{
-      "title": "Topic Name",
+      "title": "Topic name from document",
       "order": 1,
       "subtitles": [
         {{"title": "Subtitle 1", "order": 1}},
@@ -130,10 +129,17 @@ Required JSON format:
   ]
 }}
 
-Content:
+2. "topics" = main section headings (H1/H2 level)
+3. "subtitles" = direct child headings under each topic (H3 level)
+4. Use exact wording from the document
+5. Preserve document order
+6. {max_topics_rule}7. NO markdown, NO explanations, NO code blocks - JSON ONLY
+8. If no clear subtitles exist, use empty array: "subtitles": []
+
+Document content:
 {text}
 
-Output JSON only:"""
+JSON output:"""
         return prompt
     
     def _parse_structure_response(self, response: str) -> dict:
