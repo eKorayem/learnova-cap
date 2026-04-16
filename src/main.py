@@ -1,17 +1,20 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
-from routes import base, data, nlp
+from routes import base, data, nlp, ai
 from motor.motor_asyncio import AsyncIOMotorClient
 from helpers.config import get_settings
 from stores.llm.LLMProviderFactory import LLMProviderFactory
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
+from stores.llm.templates.template_parser import TemplateParser
+
 app = FastAPI()
 
 
 # @app.on_event("startup")
 async def startup_span():
     settings = get_settings()
-    
+
+    app.settings = settings  # Make settings available to routes
     app.mongo_conn = AsyncIOMotorClient(settings.MONGODB_URL)
     app.db_client = app.mongo_conn[settings.MONGODB_DATABASE]
     
@@ -32,6 +35,13 @@ async def startup_span():
         provider=settings.VECTOR_DB_BACKEND,
     )
     app.vectordb_client.connect()
+
+    app.template_parser = TemplateParser(
+        language=settings.PRIMARY_LAN,
+        default_language=settings.DEFAULT_LAN
+    )
+
+
     
 # @app.on_event("shutdown")
 async def shutdown_span():
@@ -47,3 +57,4 @@ app.on_event("shutdown")(shutdown_span)
 app.include_router(base.base_router)
 app.include_router(data.data_router)
 app.include_router(nlp.nlp_router)
+app.include_router(ai.ai_router) 

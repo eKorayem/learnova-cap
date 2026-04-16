@@ -43,7 +43,11 @@ class ProcessController(BaseController):
         return None
         
     def process_file_content(self, file_content: list, file_id: str,
-                             chunk_size: int=100, overlap_size: int=20):
+                             chunk_size: int=None, overlap_size: int=None):
+        # Defaults (can be overridden by caller)
+        # RAG defaults: 100/20, Structure defaults: 1000/100
+        chunk_size = chunk_size if chunk_size is not None else self.app_settings.RAG_CHUNK_SIZE
+        overlap_size = overlap_size if overlap_size is not None else self.app_settings.RAG_OVERLAP_SIZE
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=overlap_size,
