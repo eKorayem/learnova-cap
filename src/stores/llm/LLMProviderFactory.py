@@ -1,11 +1,13 @@
 from .LLMEnums import LLMEnums
-from .providers import OpenAIProvider, CoHereProvider, GroqProvider, SentenceTransformerProvider
+from .providers import OpenAIProvider, CoHereProvider, GroqProvider, SentenceTransformerProvider, OpenRouterProvider, JinaProvider
+
 
 class LLMProviderFactory:
     def __init__(self, config: dict):
         self.config = config
-    
+
     def create(self, provider: str):
+
         if provider == LLMEnums.OPENAI.value:
             return OpenAIProvider(
                 api_key=self.config.OPENAI_API_KEY,
@@ -14,29 +16,43 @@ class LLMProviderFactory:
                 defualt_generation_max_out_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
                 default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE
             )
-        
+
         elif provider == LLMEnums.COHERE.value:
             return CoHereProvider(
                 api_key=self.config.COHERE_API_KEY,
-                defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS, 
+                defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
                 defualt_generation_max_out_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
                 default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE
             )
-        
+
         elif provider == LLMEnums.GROQ.value:
             return GroqProvider(
                 api_key=self.config.GROQ_API_KEY,
-                defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS, 
+                defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
                 defualt_generation_max_out_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
                 default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE
             )
-        
+
         elif provider == LLMEnums.SENTENCE_TRANSFORMER.value:
             return SentenceTransformerProvider(
                 defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
                 defualt_generation_max_out_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
                 default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE
             )
-        
+
+        elif provider == LLMEnums.OPENROUTER.value:
+            return OpenRouterProvider(
+                api_key=self.config.QUESTION_OPENAI_API_KEY,
+                defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
+                defualt_generation_max_out_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
+                default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE
+            )
+
+        elif provider == LLMEnums.JINA.value:
+            return JinaProvider(
+                api_key=self.config.JINA_API_KEY,
+                defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
+            )
+
         else:
             raise ValueError(f"Unsupported provider: {provider}")

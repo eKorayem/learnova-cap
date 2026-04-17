@@ -1,2 +1,26 @@
-mongodb
+# Environment files - NEVER commit secrets
+env/.env*
+!env/.env.example*
 .env
+
+# Data volumes
+mongodb/
+qdrant_db/
+*.rdb
+*.aof
+
+# Logs
+*.log
+
+# Temporary files
+notes.md
+project_code.md
+export_py_to_md.py
+srcc/
+
+# Docker artifacts
+*.tar
+*.tar.gz
+
+docker_hierarchy.md
+export_docker_heir.py
