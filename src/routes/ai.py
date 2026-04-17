@@ -2,10 +2,9 @@ import logging
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 from routes.schemas.ai import (
-    AnalyzeStructureRequest,
-    AnalyzeStructureResponse,
-    TopicResponse,
-    SubtitleResponse
+    AnalyzeMaterialStructureRequest,
+    AnalyzeMaterialStructureResponse,
+    NormalizedTopicResponse
 )
 from routes.schemas.data import ProcessRequest
 from models.ProjectModel import ProjectModel
@@ -19,106 +18,118 @@ from models.enums.AssetTypeEnum import AssetTypeEnum
 logger = logging.getLogger('uvicorn.error')
 
 ai_router = APIRouter(
-    prefix="/api/v1/ai",
-    tags=["api_v1", "ai"]
+    prefix="/api/v1/courses",
+    tags=["api_v1", "courses"]
 )
 
 
-@ai_router.post("/analyze-structure")
-async def analyze_structure(
+@ai_router.post("/{project_id}/structure/analyze", response_model=AnalyzeMaterialStructureResponse)
+async def analyze_material_structure(
     request: Request,
-    analyze_request: AnalyzeStructureRequest
+    project_id: str,
+    analyze_request: AnalyzeMaterialStructureRequest
 ):
     """
-    Analyze PDF structure and extract topics/subtitles
+    Analyze document structure and return normalized flat topics.
+
+    Note: In this flow, project_id (path parameter) corresponds logically
+    to material_id from the backend system. The request body also includes
+    material_id for explicit backend mapping.
+
+    Returns a flat list of topics where:
+    - Each topic and subtitle becomes one row
+    - parent_temp_id links subtitles to their parent topics
+    - order_index is a global zero-based index
     """
-    
-    # Get models
     project_model = await ProjectModel.create_instance(
         db_client=request.app.db_client
     )
-    
+
     chunk_model = await ChunkModel.create_instance(
         db_client=request.app.db_client
     )
-    
-    # Check project exists
+
     project = await project_model.get_project_or_create_one(
-        project_id=analyze_request.project_id
+        project_id=project_id
     )
-    
+
     if not project:
+        # Return failed response structure
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
-            content={
-                "signal": "project_not_found",
-                "message": f"Project {analyze_request.project_id} not found"
-            }
+            content=AnalyzeMaterialStructureResponse(
+                request_id=analyze_request.request_id,
+                course_id=analyze_request.course_id,
+                module_id=analyze_request.module_id,
+                material_id=analyze_request.material_id,
+                status="failed",
+                topics=[]
+            ).dict()
         )
-    
-    # Analyze structure
+
     structure_controller = StructureController(
         generation_client=request.app.generation_client
     )
 
-    structure = await structure_controller.analyze_lecture_structure(
+    # Analyze structure and get normalized flat topics
+    # Note: project_id here corresponds to material_id in backend terms
+    # routes/ai.py
+    normalized_topics, analysis_status = await structure_controller.analyze_material_structure(
         chunk_model=chunk_model,
         project_id=project.project_id,
         max_topics=analyze_request.max_topics,
         use_all_chunks=analyze_request.use_all_chunks
     )
-    
-    if not structure:
+
+    if not normalized_topics:
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "signal": "structure_analysis_failed",
-                "message": "Failed to analyze document structure"
-            }
+            content=AnalyzeMaterialStructureResponse(
+                request_id=analyze_request.request_id,
+                course_id=analyze_request.course_id,
+                module_id=analyze_request.module_id,
+                material_id=analyze_request.material_id,
+                status="failed",
+                topics=[]
+            ).dict()
         )
-    
-    # Format response
+
+    # Build normalized topic responses
     topics_response = [
-        TopicResponse(
+        NormalizedTopicResponse(
+            temp_id=topic["temp_id"],
             title=topic["title"],
-            order=topic["order"],
-            subtitles=[
-                SubtitleResponse(
-                    title=sub["title"],
-                    order=sub["order"]
-                )
-                for sub in topic.get("subtitles", [])
-            ]
+            description=topic["description"],
+            order_index=topic["order_index"],
+            parent_temp_id=topic["parent_temp_id"]
         )
-        for topic in structure.get("topics", [])
+        for topic in normalized_topics
     ]
-    
+
+    logger.info(f"Successfully analyzed structure: {len(topics_response)} topics, status={status}")
+
     return JSONResponse(
-        content={
-            "signal": "structure_analysis_success",
-            "project_id": analyze_request.project_id,
-            "lecture_id": analyze_request.lecture_id,
-            "topics": [topic.dict() for topic in topics_response]
-        }
+        content=AnalyzeMaterialStructureResponse(
+            request_id=analyze_request.request_id,
+            course_id=analyze_request.course_id,
+            module_id=analyze_request.module_id,
+            material_id=analyze_request.material_id,
+            status=analysis_status,
+            topics=topics_response
+        ).dict()
     )
 
 
-@ai_router.post("/process-with-structure/{project_id}")
+@ai_router.post("/{project_id}/documents/chunks/structure")
 async def process_with_structure(
     request: Request,
     project_id: str,
     process_request: ProcessRequest
 ):
-    """
-    Process documents with structure-aware chunking.
-    Uses larger chunk sizes to preserve topic context for better structure analysis.
-    """
-
     asset_model = await AssetModel.create_instance(db_client=request.app.db_client)
     project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
     project = await project_model.get_project_or_create_one(project_id=project_id)
 
-    # Get assets
     project_files_ids = {}
     if process_request.file_id:
         asset_record = await asset_model.get_asset_record(
@@ -148,9 +159,12 @@ async def process_with_structure(
     chunk_model = await ChunkModel.create_instance(db_client=request.app.db_client)
 
     if process_request.do_reset:
-        _ = await chunk_model.delete_chunks_by_project_id(project_id=project.project_id)
+        # Only delete structure chunks — leave rag/question chunks untouched
+        _ = await chunk_model.delete_chunks_by_project_id(
+            project_id=project.project_id,
+            chunk_type="structure"
+        )
 
-    # Use larger chunks for structure preservation (from config)
     structure_chunk_size = process_request.chunk_size or request.app.settings.STRUCTURE_CHUNK_SIZE
     structure_overlap_size = process_request.overlap_size or request.app.settings.STRUCTURE_OVERLAP_SIZE
 
@@ -158,6 +172,7 @@ async def process_with_structure(
     no_files = 0
 
     for asset_id, file_id in project_files_ids.items():
+
         file_content = process_controller.get_file_content(file_id=file_id)
 
         if file_content is None:
@@ -181,7 +196,8 @@ async def process_with_structure(
                 chunk_order=i + 1,
                 project_id=project.project_id,
                 chunk_project_id=project.id,
-                chunk_asset_id=asset_id
+                chunk_asset_id=asset_id,
+                chunk_type="structure"      # ← tagged
             )
             for i, chunk in enumerate(file_chunks)
         ]

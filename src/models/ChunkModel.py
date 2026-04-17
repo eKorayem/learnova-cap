@@ -3,6 +3,7 @@ from .db_schemas import DataChunk
 from .enums.DataBaseEnums import DataBaseEnums
 from bson.objectid import ObjectId
 from pymongo import InsertOne
+from typing import Optional
 
 
 class ChunkModel(BaseDataModel):
@@ -12,13 +13,13 @@ class ChunkModel(BaseDataModel):
         self.collection = self.db_client[
             DataBaseEnums.COLLECTION_CHUNK_NAME.value
         ]
-    
+
     @classmethod
     async def create_instance(cls, db_client: object):
         instance = cls(db_client)
         await instance.init_collection()
         return instance
-    
+
     async def init_collection(self):
         all_collections = await self.db_client.list_collection_names()
         if DataBaseEnums.COLLECTION_CHUNK_NAME.value not in all_collections:
@@ -34,7 +35,6 @@ class ChunkModel(BaseDataModel):
     async def create_chunk(self, chunk: DataChunk) -> DataChunk:
         data = chunk.dict(by_alias=True, exclude={"id"})
         result = await self.collection.insert_one(data)
-
         chunk.id = result.inserted_id
         return chunk
 
@@ -42,66 +42,74 @@ class ChunkModel(BaseDataModel):
         record = await self.collection.find_one(
             {"_id": ObjectId(chunk_id)}
         )
-
         if record is None:
             return None
-
         return DataChunk(**record)
 
-    # batch insert
     async def insert_many_chunks(
         self,
         chunks: list[DataChunk],
         batch_size: int = 100
     ) -> int:
-
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]
-
             operations = [
-                InsertOne(
-                    chunk.dict(by_alias=True, exclude={"id"})
-                )
+                InsertOne(chunk.dict(by_alias=True, exclude={"id"}))
                 for chunk in batch
             ]
-
             await self.collection.bulk_write(operations)
-
         return len(chunks)
-    
-    async def delete_chunks_by_project_id(self, project_id: str):
-        result = await self.collection.delete_many({
-            "project_id": project_id  # string business ID
-        })
+
+    async def delete_chunks_by_project_id(
+        self,
+        project_id: str,
+        chunk_type: Optional[str] = None   # if None, deletes ALL types
+    ):
+        query = {"project_id": project_id}
+        if chunk_type:
+            query["chunk_type"] = chunk_type
+
+        result = await self.collection.delete_many(query)
         return result.deleted_count
-    
-    async def get_chunks_by_project_id(self, project_id: str, page_no: int=1, page_size: int = 50) -> list[DataChunk]:
+
+    async def get_chunks_by_project_id(
+        self,
+        project_id: str,
+        page_no: int = 1,
+        page_size: int = 50,
+        chunk_type: Optional[str] = None   # if None, returns ALL types
+    ) -> list[DataChunk]:
+
+        query = {"project_id": project_id}
+        if chunk_type:
+            query["chunk_type"] = chunk_type
+
         skip = (page_no - 1) * page_size
-        cursor = self.collection.find(
-            {"project_id": project_id}
-        ).skip(skip).limit(page_size)
+        cursor = self.collection.find(query).skip(skip).limit(page_size)
 
         chunks = []
         async for record in cursor:
             chunks.append(DataChunk(**record))
 
         return chunks
-    
+
     async def get_chunks_by_project_object_id(
         self,
         chunk_project_id: ObjectId,
         page_no: int = 1,
-        page_size: int = 100
+        page_size: int = 100,
+        chunk_type: Optional[str] = None
     ) -> list[DataChunk]:
-        """Get chunks by MongoDB ObjectId"""
+
+        query = {"chunk_project_id": chunk_project_id}
+        if chunk_type:
+            query["chunk_type"] = chunk_type
+
         skip = (page_no - 1) * page_size
-        
-        cursor = self.collection.find(
-            {"chunk_project_id": chunk_project_id}
-        ).skip(skip).limit(page_size)
-        
+        cursor = self.collection.find(query).skip(skip).limit(page_size)
+
         chunks = []
         async for doc in cursor:
             chunks.append(DataChunk(**doc))
-        
+
         return chunks

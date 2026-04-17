@@ -3,16 +3,23 @@ APP_VERSION="0.1"
 FILE_ALLOWED_TYPES=["text/plain", "application/pdf"]
 FILE_ALLOWED_SIZE=100
 FILE_DEFAULT_CHUNK_SIZE=512000
-MONGODB_URL="mongodb://admin:admin@mongodb:27017"
+MONGODB_URL="mongodb://admin:admin@localhost:27007"
 MONGODB_DATABASE="mini-rag"
 
+MONGO_INITDB_ROOT_USERNAME=admin
+MONGO_INITDB_ROOT_PASSWORD=admin
 # ============================ LLM Configurations ============================
-GENERATION_BACKEND="GROQ"
-EMBEDDING_BACKEND="JINA"
+# GENERATION_BACKEND = "OPENAI"
+GENERATION_BACKEND = "GROQ"
+EMBEDDING_BACKEND = "JINA"
 
+OPENAI_API_KEY=""
+OPENAI_API_URL=""
+COHERE_API_KEY=
 GROQ_API_KEY=""
-GENERATION_MODEL_ID="llama-3.3-70b-versatile"
 
+GENERATION_MODEL_ID="llama-3.3-70b-versatile"
+# GENERATION_MODEL_ID="gemma2:9b-instruct-q5_0"
 EMBEDDING_MODEL_ID="jina-embeddings-v3"
 EMBEDDING_MODEL_SIZE=1024
 
@@ -37,10 +44,11 @@ QUESTION_CHUNK_SIZE=1500
 QUESTION_OVERLAP_SIZE=150
 
 # ============================ VectorDB Configurations ============================
-VECTOR_DB_BACKEND="QDRANT"
-VECTOR_DB_URL="http://qdrant:6333"
-VECTOR_DB_DISTANCE_METHOD="cosine"
+VECTOR_DB_BACKEND = "QDRANT"
+VECTOR_DB_PATH = "qdrant_db"
+VECTOR_DB_DISTANCE_METHOD = "cosine"
 
 # ============================ Template Configurations ============================
-DEFAULT_LAN="en"
-PRIMARY_LAN="en"
+DEFAULT_LAN = "en"
+PRIMARY_LAN = "en"
+

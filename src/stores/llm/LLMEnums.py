@@ -4,8 +4,10 @@ class LLMEnums(Enum):
     OPENAI = "OPENAI"
     COHERE = "COHERE"
     GROQ = "GROQ"
-    SENTENCE_TRANSFORMER = "SENTENCE_TRANSFORMER" 
-    
+    SENTENCE_TRANSFORMER = "SENTENCE_TRANSFORMER"
+    OPENROUTER = "OPENROUTER"         
+    JINA = "JINA"  
+
 class OpenAIEnums(Enum):
     SYSTEM = "system"
     USER = "user"
@@ -15,17 +17,14 @@ class CoHereEnums(Enum):
     SYSTEM = "SYSTEM"
     USER = "USER"
     ASSISTANT = "CHATBOT"
-    
+
     DOCUMENT = "search_document"
     QUERY = "search_query"
-    
-    
+
 class DocumentTypeEnums(Enum):
-    DOCUMENT="document"
-    QUERY="query"
-    
+    DOCUMENT = "document"
+    QUERY = "query"
+
 class GroqEnums(Enum):
     SYSTEM = "system"
     USER = "user"
-    # ASSISTANT = "CHATBOT"
-
