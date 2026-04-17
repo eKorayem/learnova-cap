@@ -1,10 +1,10 @@
-APP_NAME="mini-RAG"
+APP_NAME="learnova-cap"
 APP_VERSION="0.1"
 FILE_ALLOWED_TYPES=["text/plain", "application/pdf"]
 FILE_ALLOWED_SIZE=100
 FILE_DEFAULT_CHUNK_SIZE=512000
 MONGODB_URL="mongodb://admin:admin@localhost:27007"
-MONGODB_DATABASE="mini-rag"
+MONGODB_DATABASE="learnova-cap"
 
 MONGO_INITDB_ROOT_USERNAME=admin
 MONGO_INITDB_ROOT_PASSWORD=admin

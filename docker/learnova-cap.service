@@ -1,5 +1,5 @@
 [Unit]
-Description=MiniRAG Docker Compose Service
+Description=Learnova CAP Docker Compose Service
 After=network.target docker.service
 Requires=docker.service
 
@@ -8,7 +8,7 @@ Type=oneshot
 RemainAfterExit=yes
 User=YOUR_USERNAME
 Group=docker
-WorkingDirectory=/path/to/mini-rag-app/docker
+WorkingDirectory=/path/to/learnova-cap/docker
 
 ExecStart=/usr/bin/docker compose up -d
 ExecStop=/usr/bin/docker compose down

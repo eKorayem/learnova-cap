@@ -6,7 +6,7 @@ services:
   fastapi:
     build:
       context: ..
-      dockerfile: docker/minirag/Dockerfile
+      dockerfile: docker/learnova-cap/Dockerfile
     container_name: fastapi
     ports:
       - "8000:8000"
