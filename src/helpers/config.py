@@ -64,6 +64,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # ============================ Security Configurations ============================
+    AI_SHARED_SECRET: str
+
 
 def get_settings():
     return Settings()

@@ -18,6 +18,9 @@ from models.enums.AssetTypeEnum import AssetTypeEnum
 from fastapi import FastAPI, APIRouter, Depends, UploadFile, status, Request, BackgroundTasks # <--- Added BackgroundTasks
 from controllers import DataController, ProjectController, ProcessController, NLPController # <--- Added NLPController
 
+from fastapi import APIRouter, Request, Depends, status # ... existing imports
+from core.security.dependencies import verify_backend_signature
+
 logger = logging.getLogger('uvicorn.error')
 
 data_router = APIRouter(
@@ -354,3 +357,13 @@ async def process_document_master(
         "status": "processing_started",
         "message": f"Processing {len(project_files_ids)} document(s) in the background."
     }
+
+@data_router.post("/test-secure-endpoint")
+async def secure_test(
+    request: Request,
+    request_id: str = Depends(verify_backend_signature) # <-- THE GATEKEEPER
+):
+    """
+    Temporary endpoint to test the HMAC SHA256 Learnova signature.
+    """
+    return {"message": f"Security passed! Processing request: {request_id}"}
