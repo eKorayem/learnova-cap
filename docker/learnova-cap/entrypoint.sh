@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "Starting Mini-RAG application..."
+echo "Starting Learnova CAP application..."
 
 # Ensure required directories exist
 mkdir -p /app/assets/files

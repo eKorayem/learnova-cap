@@ -64,6 +64,12 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # ============================ Security Configurations ============================
+    AI_SHARED_SECRET: str
+
+    # ============================ Webhook Configurations ============================
+    LEARNOVA_BACKEND_URL: str = "http://host.docker.internal:8080" # Default local URL for testing
+
 
 def get_settings():
     return Settings()

@@ -6,7 +6,7 @@ services:
   fastapi:
     build:
       context: ..
-      dockerfile: docker/minirag/Dockerfile
+      dockerfile: docker/learnova-cap/Dockerfile
     container_name: fastapi
     ports:
       - "8000:8000"
@@ -90,7 +90,7 @@ services:
       - backend
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      test: ["CMD-SHELL", "curl -f http://localhost/api/v1/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

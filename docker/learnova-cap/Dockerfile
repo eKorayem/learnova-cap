@@ -27,7 +27,8 @@ COPY src/ .
 
 # COPY docker/minirag/alembic.ini /app/models/db_schemes/minirag/alembic.ini
 
-COPY docker/minirag/entrypoint.sh /entrypoint.sh
+
+COPY docker/learnova-cap/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
