@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from helpers.config import get_settings, Settings
 from core.security.dependencies import verify_backend_signature
 
-from controllers import DataController, ProjectController, ProcessController, NLPController
+from controllers import DataController, ProjectController, ProcessController, NLPController, StructureController
 from models.ProjectModel import ProjectModel
 from models.ChunkModel import ChunkModel
 from models.AssetModel import AssetModel
@@ -80,7 +80,10 @@ async def _download_and_process_background(
         project_files_ids=project_files_ids,
         do_reset=0,
         request_id=payload.request_id,
-        course_id=payload.course_id
+        course_id=payload.course_id,
+        operation_type=payload.operation_type, # <--- Pass it down
+        module_id=payload.body.module_id,    # <--- ADDED
+        material_id=payload.body.material_id # <--- ADDED
     )
 
 
@@ -265,7 +268,8 @@ async def process_endpoint(request: Request, project_id: str, process_request: P
 
 async def _master_process_background(
     app, project, project_files_ids: dict, do_reset: int,
-    request_id: str = None, course_id: int = None # <-- Added optional parameters,
+    request_id: str = None, course_id: int = None, operation_type: str = None,
+    module_id: int = None, material_id: int = None # <--- ADDED
 ):
     logger.info(f"Starting background processing for project: {project.project_id}")
     try:
@@ -346,23 +350,55 @@ async def _master_process_background(
             )
 
         logger.info(f"✅ Master processing COMPLETE for project: {project.project_id}")
-        # --- NEW CALLBACK TRIGGER ---
-        if request_id and course_id:
+        
+        # ========================================================
+        # GENERATE STRUCTURE FOR THE FAT PAYLOAD
+        # ========================================================
+        logger.info("Generating structure/topics to include in the callback...")
+        structure_controller = StructureController(generation_client=app.generation_client)
+        
+        normalized_topics, analysis_status = await structure_controller.analyze_material_structure(
+            chunk_model=chunk_model,
+            project_id=project.project_id,
+            max_topics=None,
+            use_all_chunks=False
+        )
+        
+        # Cleaned up redundant if/else block!
+        callback_data = {
+            "topics": normalized_topics if analysis_status == "completed" else [],
+            "learning_outcomes": [],                   
+            "topic_learning_outcome_relations": []     
+        }
+        # ========================================================
+
+        # --- DYNAMIC CALLBACK TRIGGER ---
+        if request_id and course_id and operation_type:
             await send_webhook_callback(
                 request_id=request_id,
                 course_id=course_id,
-                operation_type="document_ingestion",
+                operation_type=operation_type,
                 status="success",
-                message=f"Document successfully chunked and vectorized."
+                message="Document successfully chunked, vectorized, and structure extracted.",
+                module_id=module_id,       
+                material_id=material_id,   
+                data=callback_data         
             )
 
     except Exception as e:
         logger.error(f"Error in master processing for {project.project_id}: {e}")
         # Send failure callback if it crashes!
-        if request_id and course_id:
+        if request_id and course_id and operation_type:
+            safe_error_msg = f"Processing failed: {str(e).split('Raw response')[0].strip()}"
+            
             await send_webhook_callback(
-                request_id=request_id, course_id=course_id,
-                operation_type="document_ingestion", status="failed", message=str(e)
+                request_id=request_id,
+                course_id=course_id,
+                operation_type=operation_type,
+                status="failed",
+                message=safe_error_msg,
+                module_id=module_id,     # <--- ADDED SO FAILURE AVOIDS 400 BAD REQUEST!
+                material_id=material_id  # <--- ADDED
             )
 
 @data_router.post("/{project_id}/process", status_code=status.HTTP_202_ACCEPTED)

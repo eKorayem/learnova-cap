@@ -11,36 +11,45 @@ async def send_webhook_callback(
     course_id: int, 
     operation_type: str, 
     status: str, 
-    message: str
+    message: str,
+    module_id: int = None,     # <--- ADDED
+    material_id: int = None,   # <--- ADDED
+    data: dict = None
 ):
     """
     The Mailman: Signs and sends the callback payload back to the Learnova backend.
     """
     settings = get_settings()
-    
-    # 1. Setup the destination (Ask your backend team for the exact path they want)
-    callback_path = "/api/v1/ai/callback"
-    callback_url = f"{settings.LEARNOVA_BACKEND_URL}{callback_path}"
-    
-    # 2. Generate a fresh timestamp
+    callback_path = "/ai/callback"
+    callback_url = f"{settings.LEARNOVA_BACKEND_URL.rstrip('/')}{callback_path}"
     timestamp = get_current_timestamp()
     
-    # 3. Build the exact envelope they requested
-    payload_dict = build_ai_request_envelope(
-        request_id=request_id,
-        timestamp=timestamp,
-        operation_type=operation_type,
-        course_id=course_id,
-        body={
-            "status": status,
-            "message": message
-        }
-    )
+    # Build the body exactly how the backend guy requested
+    body_payload = {}
+    if module_id is not None:
+        body_payload["module_id"] = module_id
+    if material_id is not None:
+        body_payload["material_id"] = material_id
+        
+    if data:
+        body_payload.update(data) 
+        
+    if status != "success":
+        body_payload["message"] = message # Only send the message string if it failed
+
+    # Build the envelope with STATUS AT THE ROOT
+    payload_dict = {
+        "request_id": request_id,
+        "timestamp": timestamp,
+        "operation_type": operation_type,
+        "course_id": course_id,
+        "status": "completed" if status == "success" else "failed", # Backend uses "completed"
+        "body": body_payload
+    }
     
-    # 4. Serialize the JSON exactly how it will travel over the network
+    # Serialize and sign
     serialized_body = serialize_json_for_signing(payload_dict)
     
-    # 5. Calculate the HMAC SHA-256 Signature
     signature = create_signature_from_bytes(
         secret=settings.AI_SHARED_SECRET,
         method="POST",
@@ -50,14 +59,13 @@ async def send_webhook_callback(
         body=serialized_body
     )
     
-    # 6. Build the security headers
     headers = build_ai_request_headers(
         request_id=request_id,
         timestamp=timestamp,
         signature=signature
     )
     
-    # 7. Send the Callback asynchronously
+    # Send the Callback
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(callback_url, content=serialized_body, headers=headers)
