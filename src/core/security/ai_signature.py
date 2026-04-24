@@ -100,7 +100,13 @@ def create_signature_from_bytes(
         timestamp=timestamp,
         body_hash=body_hash,
     )
-
+    # --- ADD THESE PRINT STATEMENTS ---
+    print("\n=== DEBUG: PYTHON SIDE ===")
+    print(f"1. RAW BODY BYTES: {body}")
+    print(f"2. BODY HASH: {body_hash}")
+    print(f"3. CANONICAL STRING (repr): {repr(canonical_string)}")
+    print("==========================\n")
+    # ----------------------------------
     return hmac.new(
         key=secret.encode("utf-8"),
         msg=canonical_string.encode("utf-8"),

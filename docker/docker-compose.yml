@@ -64,6 +64,11 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     networks:
       - backend
     restart: unless-stopped

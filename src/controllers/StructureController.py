@@ -377,7 +377,7 @@ Output JSON only:"""
             "This is a SINGLE LECTURE or short document.\n"
             "- Top-level topics = main sections\n"
             "- Subtitles = sub-points within each section\n"
-            "- A typical lecture has 3–8 main topics"
+            "- A typical lecture has 3-8 main topics"
         )
 
         return f"""You are an expert educational content structure analyzer.
