@@ -325,17 +325,24 @@ class StructureController(BaseController):
             return True
 
         # 2. Lowercase start (sentence fragment, not a heading)
-        # Exception: Arabic text doesn't have case
-        if line[0].islower() and re.search(r"[a-zA-Z]", line):
+        # Exception: Arabic text doesn't have case, so we only target English a-z
+        if len(line) > 0 and 'a' <= line[0] <= 'z':
             return True
 
-        # 3. Math/Code expressions
-        if re.search(r"[=+*/<>$]", line):
+        # 3. Math/Code expressions (Aggressive)
+        # Check for common math operators and equality signs
+        if re.search(r"[=+\-*/<>$≈≠≤≥∑∫∞]", line):
             return True
-        # High symbol-to-alpha ratio
+            
+        # Check for isolated coordinates or variable lists (e.g., "Px, Py, Pz", "x, y")
+        if re.match(r"^([A-Za-zأ-ي]\s*,\s*)+[A-Za-zأ-ي]$", line):
+            return True
+            
+        # Catch lines that are predominantly non-alphanumeric (brackets, parens, subscripts)
         alpha_count = sum(1 for c in line if c.isalpha())
-        if alpha_count > 0 and (alpha_count / max(len(line), 1)) < 0.4:
+        if len(line) > 0 and (alpha_count / len(line)) < 0.5:
             return True
+            
         # Decimal numbering without text
         if re.match(r"^\d+\.\d+\s*$", line):
             return True
@@ -369,14 +376,13 @@ class StructureController(BaseController):
         if self._looks_like_question_or_exercise(line):
             return True
 
-        # 7. Colon trap: Short instructional text ending in colon
-        # "To describe this object you use:" - but allow "Chapter 1:"
+        # 7. Colon trap: Long instructional sentences ending in colon
+        # e.g., "To describe this object you use two attributes:" -> Noise
+        # e.g., "Introduction:" -> Keep
         if line.endswith(":"):
             words = line.split()
-            if len(words) <= 5:
-                # Allow if starts with chapter/unit markers
-                if not re.match(r"^(chapter|section|part|unit|topic|الفصل|الباب|الوحدة|الدرس)\s", line, re.IGNORECASE):
-                    return True
+            if len(words) > 5:
+                return True
 
         # 8. All caps short fragments (likely labels, not headings)
         if line.isupper() and len(line) < 10 and " " not in line:
