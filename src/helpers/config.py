@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     JINA_API_KEY: Optional[str] = None
     JINA_API_URL: str = "https://api.jina.ai/v1"
 
+    DEEPSEEK_API_KEY: Optional[str] = None
+
     # ======================= Chunking Config =======================
 
     RAG_CHUNK_SIZE: int = 100

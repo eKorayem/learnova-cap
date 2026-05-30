@@ -1,5 +1,5 @@
 from .LLMEnums import LLMEnums
-from .providers import OpenAIProvider, CoHereProvider, GroqProvider, SentenceTransformerProvider, OpenRouterProvider, JinaProvider
+from .providers import OpenAIProvider, CoHereProvider, GroqProvider, SentenceTransformerProvider, OpenRouterProvider, JinaProvider, DeepSeekProvider
 
 
 class LLMProviderFactory:
@@ -53,6 +53,16 @@ class LLMProviderFactory:
                 api_key=self.config.JINA_API_KEY,
                 defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
             )
+        
+
+        elif provider == LLMEnums.DEEPSEEK.value:
+            return DeepSeekProvider(
+                api_key=self.config.DEEPSEEK_API_KEY,
+                defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
+                defualt_generation_max_out_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
+                default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE
+            )
+
 
         else:
             raise ValueError(f"Unsupported provider: {provider}")
