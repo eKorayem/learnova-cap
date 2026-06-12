@@ -77,13 +77,19 @@ class ChunkModel(BaseDataModel):
         project_id: str,
         page_no: int = 1,
         page_size: int = 50,
-        chunk_type: Optional[str] = None   # if None, returns ALL types
+        chunk_type: Optional[str] = None,   # if None, returns ALL types
+        asset_id: Optional[ObjectId] = None # <--- NEW PARAMETER
     ) -> list[DataChunk]:
 
         query = {"project_id": project_id}
         if chunk_type:
             query["chunk_type"] = chunk_type
 
+        # --- NEW FILTER ---
+        if asset_id:
+            query["chunk_asset_id"] = asset_id 
+        # ------------------
+        
         skip = (page_no - 1) * page_size
         cursor = self.collection.find(query).skip(skip).limit(page_size)
 

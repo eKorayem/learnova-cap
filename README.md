@@ -1,57 +1,104 @@
+# Learnova AI Backend (Capstone Project)
 # Learnova-CAP
 
-This is a minimal implementation of the RAG model for question answering.
+![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)
+![Docker](https://img.shields.io/badge/Docker-2CA5E0?style=flat&logo=docker&logoColor=white)
+![MongoDB](https://img.shields.io/badge/MongoDB-4EA94B?style=flat&logo=mongodb&logoColor=white)
+![Qdrant](https://img.shields.io/badge/Qdrant-Vector_DB-red)
 
-## Requirements
+## Overview
+Learnova is an intelligent, AI-driven educational platform designed to revolutionize how students and educators interact with academic materials. 
 
-- Python 3.8 or later
+This repository houses the core **AI Backend Engine**, built with FastAPI. It is responsible for ingesting complex academic documents (PDFs, textbooks, lecture slides), parsing them using state-of-the-art Large Language Models, and transforming them into interactive, structured learning experiences.
 
-#### Install Python using MiniConda
+## Core Features
 
-1) Download and install MiniConda from [here](https://docs.anaconda.com/free/miniconda/#quick-command-line-install)
+* **Universal Academic Parser:** Dynamically ingests diverse file formats. It uses advanced spatial heuristics and AI to flawlessly extract Table of Contents, chapter hierarchies, and sparse lecture slides, while actively filtering out academic noise and boilerplate.
+* **Bilingual Native Support:** Fully optimized to process, parse, and generate content in both **English** and **Arabic** natively without breaking structural integrity.
+* **Intelligent Question Generation:** Leverages deep reasoning models (like GPT-4o / gpt-oss-120b) to generate rigorous Multiple Choice Questions (MCQs) with highly plausible educational distractors.
+* **RAG-Powered Tutoring:** Embeds document chunks into a Vector Space to power a highly accurate, hallucination-free chatbot that answers student questions based strictly on the uploaded curriculum.
 
-2) Create a new environment using the following command:
+## Architecture & Tech Stack
+
+* **Backend Framework:** FastAPI (Python)
+* **Databases:**
+  * MongoDB (Document & Metadata Storage)
+  * Qdrant (Vector Database for RAG Embeddings)
+  * Supabase (Cloud File Storage)
+* **AI & Machine Learning:**
+  * LLM Providers: OpenRouter, Groq
+  * Supported Models: Claude 3.5 Sonnet, GPT-4o, GPT-OSS-120B
+  * Embeddings: Jina-Embeddings-v3, Cohere Multilingual
+* **DevOps:** Docker & Docker Compose V2
+
+---
+
+## Getting Started (Local Development)
+
+### Prerequisites
+* Docker Engine & **Docker Compose V2** plugin installed.
+* Git
+
+### 1. Clone the repository
 ```bash
-$ conda create -n mini-rag python=3.11
+git clone [https://github.com/](https://github.com/)[your-username]/learnova-cap.git
+cd learnova-cap
 ```
 
-3) Activate the environment:
+### 2. Environment Configuration
+Create a .env file in the root directory and configure your API keys and database URIs:
+
 ```bash
-$ conda activate mini-rag
+# AI Providers
+GENERATION_BACKEND="OPENROUTER"
+GENERATION_MODEL_ID="openai/gpt-oss-120b" # or anthropic/claude-3.5-sonnet
+QUESTION_GENERATION_BACKEND="OPENROUTER"
+QUESTION_GENERATION_MODEL_ID="openai/gpt-4o"
+
+# Embeddings
+EMBEDDING_BACKEND="JINA" # or COHERE
+EMBEDDING_MODEL_ID="jina-embeddings-v3"
+EMBEDDING_MODEL_SIZE=1024
+
+# Databases
+MONGODB_URI="your_mongo_connection_string"
+QDRANT_URL="your_qdrant_url"
 ```
 
-4) (Optional) Setup your command line for better readability
+### 3. Build and Run via Docker
+
+To boot up the entire backend pipeline, run:
+
 ```bash
-$ export PS1="\[\033[01;32m\]\u@\h:\w\n\[\033[00m\]\$ "
+cd docker
+sudo docker compose up -d --build
 ```
 
-## Installation
+### 4. Monitor the Engine
+Watch the real-time processing logs, including the custom AI Pipeline Debug Summaries:
 
-### Install the requirements
 ```bash
-$ pip install -r requirements.txt
+sudo docker compose logs -f fastapi
 ```
 
 
-### Setup the environment variables
-```bash
-$ cp .env.example .env
-```
-Set your environment variables in the `.env` file. Like `OPENAI_API_KEY` value
+## Project Structure (Key Directories)
 
-## Run Docker Compose Services
-```bash
-$ cd docker
-$ cp .env.example .env
-```
+- `/controllers/` - Contains core business logic (e.g., StructureController.py for dynamic AI parsing).
 
-- update `.env` with you credentials
+- `/models/` - Database schemas and Pydantic validation models.
 
-## Run the FastAPI server
-```bash
-$ uvicorn main:app --reload --host 0.0.0.0 --port 5000
-```
+- `/docker/` - Dockerfiles and docker-compose.yml configurations.
 
-## POSTMAN Collection
+## Contributors
+The Learnova platform was developed collaboratively as a Senior Capstone Project.
 
+* Eslam Atia - AI Engineering
+* Mazen Salah - AI Engineering
+
+## Related Repositories
+This repository contains the AI Backend Engine. The full Learnova platform is decoupled into separate repositories:
+* **Frontend Application:** []
+* **Backend Engine:** (This Repository)
 Download the postman collection from [/assets/mini-rag-app.postman_collection](/assets/mini-rag-app.postman_collection)

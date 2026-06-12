@@ -7,6 +7,7 @@ class LLMEnums(Enum):
     SENTENCE_TRANSFORMER = "SENTENCE_TRANSFORMER"
     OPENROUTER = "OPENROUTER"         
     JINA = "JINA"  
+    DEEPSEEK = "DEEPSEEK"  # <--- ADD THIS
 
 class OpenAIEnums(Enum):
     SYSTEM = "system"
@@ -28,3 +29,4 @@ class DocumentTypeEnums(Enum):
 class GroqEnums(Enum):
     SYSTEM = "system"
     USER = "user"
+

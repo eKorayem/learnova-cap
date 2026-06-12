@@ -10,6 +10,8 @@ from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from stores.llm.templates.template_parser import TemplateParser
 from utils.metrics import setup_metrics
 
+from routes.grading import grading_router
+
 app = FastAPI()
 
 # Setup Prometheus metrics
@@ -79,3 +81,4 @@ app.include_router(data.data_router)
 app.include_router(nlp.nlp_router)
 app.include_router(ai.ai_router)
 app.include_router(question_router)
+app.include_router(grading_router)

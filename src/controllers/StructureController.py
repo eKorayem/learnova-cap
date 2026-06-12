@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any, Tuple
 import json
 import re
 import logging
-
+import time
 
 class StructureController(BaseController):
     """
@@ -15,7 +15,8 @@ class StructureController(BaseController):
     def __init__(self, generation_client=None):
         super().__init__()
         self.generation_client = generation_client
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger('uvicorn.error')
+        self.logger.setLevel(logging.INFO)
 
         # Document type detection thresholds
         self.BOOK_CHUNK_THRESHOLD = 30
@@ -36,16 +37,17 @@ class StructureController(BaseController):
         chunk_model: ChunkModel,
         project_id: str,
         max_topics: int = None,
+        asset_id: str = None, # <--- NEW PARAMETER
         use_all_chunks: bool = False
     ) -> dict:
-        import time # <--- Make sure this is imported at the top of the file!
+        
         start_time = time.time()
 
         self.logger.info(f"========== [STARTED] STRUCTURE EXTRACTION FOR PROJECT {project_id} ==========")
         
         # 1. Fetch chunks
         chunks = await chunk_model.get_chunks_by_project_id(
-            project_id=project_id, page_no=1, page_size=3000, chunk_type="structure"
+            project_id=project_id, page_no=1, page_size=3000, chunk_type="structure", asset_id=asset_id
         )
 
         if not chunks:
@@ -89,7 +91,7 @@ class StructureController(BaseController):
         approx_in_tokens = len(prompt) // 4
         
         # Log the exact prompt being sent (useful for checking Arabic handling)
-        print(f"\n[DEBUG] === EXACT PROMPT SENT TO LLM ===\n{prompt}\n========================================\n")
+        print(f"\n[DEBUG] === EXACT PROMPT SENT TO LLM ===\n{prompt}\n========================================\n", flush=True)
 
         # 4. Generate AI Prompt
         try:
@@ -143,11 +145,12 @@ class StructureController(BaseController):
         self,
         chunk_model: ChunkModel,
         project_id: str,
+        asset_id: str = None,
         max_topics: int = None,
         use_all_chunks: bool = False
     ) -> tuple:
         raw_structure = await self.analyze_lecture_structure(
-            chunk_model=chunk_model, project_id=project_id,
+            chunk_model=chunk_model, project_id=project_id, asset_id=asset_id, # <--- PASSED DOWN
             max_topics=max_topics, use_all_chunks=use_all_chunks
         )
         normalized = self.normalize_structure(raw_structure)
@@ -325,17 +328,24 @@ class StructureController(BaseController):
             return True
 
         # 2. Lowercase start (sentence fragment, not a heading)
-        # Exception: Arabic text doesn't have case
-        if line[0].islower() and re.search(r"[a-zA-Z]", line):
+        # Exception: Arabic text doesn't have case, so we only target English a-z
+        if len(line) > 0 and 'a' <= line[0] <= 'z':
             return True
 
-        # 3. Math/Code expressions
-        if re.search(r"[=+*/<>$]", line):
+        # 3. Math/Code expressions (Aggressive)
+        # Check for common math operators and equality signs
+        if re.search(r"[=+\-*/<>$≈≠≤≥∑∫∞]", line):
             return True
-        # High symbol-to-alpha ratio
+            
+        # Check for isolated coordinates or variable lists (e.g., "Px, Py, Pz", "x, y")
+        if re.match(r"^([A-Za-zأ-ي]\s*,\s*)+[A-Za-zأ-ي]$", line):
+            return True
+            
+        # Catch lines that are predominantly non-alphanumeric (brackets, parens, subscripts)
         alpha_count = sum(1 for c in line if c.isalpha())
-        if alpha_count > 0 and (alpha_count / max(len(line), 1)) < 0.4:
+        if len(line) > 0 and (alpha_count / len(line)) < 0.5:
             return True
+            
         # Decimal numbering without text
         if re.match(r"^\d+\.\d+\s*$", line):
             return True
@@ -369,14 +379,13 @@ class StructureController(BaseController):
         if self._looks_like_question_or_exercise(line):
             return True
 
-        # 7. Colon trap: Short instructional text ending in colon
-        # "To describe this object you use:" - but allow "Chapter 1:"
+        # 7. Colon trap: Long instructional sentences ending in colon
+        # e.g., "To describe this object you use two attributes:" -> Noise
+        # e.g., "Introduction:" -> Keep
         if line.endswith(":"):
             words = line.split()
-            if len(words) <= 5:
-                # Allow if starts with chapter/unit markers
-                if not re.match(r"^(chapter|section|part|unit|topic|الفصل|الباب|الوحدة|الدرس)\s", line, re.IGNORECASE):
-                    return True
+            if len(words) > 5:
+                return True
 
         # 8. All caps short fragments (likely labels, not headings)
         if line.isupper() and len(line) < 10 and " " not in line:

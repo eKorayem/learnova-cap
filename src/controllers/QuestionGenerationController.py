@@ -5,8 +5,7 @@ from routes.schemas.question import (
     GenerateQuestionsResponse,
     QuestionResponse,
     QuestionConfig,
-    TopicError,
-    GradingRubric
+    TopicError
 )
 from typing import List, Optional
 import json
@@ -210,12 +209,7 @@ class QuestionGenerationController(BaseController):
             questions = []
             for q in raw_questions:
                 try:
-                    grading_rubric = None
-                    if q.get("grading_rubric"):
-                        grading_rubric = GradingRubric(
-                            type=q["grading_rubric"]["type"],
-                            items=q["grading_rubric"]["items"]
-                        )
+
 
                     questions.append(QuestionResponse(
                         topic_id=topic_id,
@@ -226,7 +220,7 @@ class QuestionGenerationController(BaseController):
                         explanation=q.get("explanation"),
                         options=q.get("options"),
                         expected_answer=q.get("expected_answer", ""),
-                        grading_rubric=grading_rubric
+                        grading_rubric=q.get("grading_rubric")
                     ))
                 except Exception as e:
                     self.logger.error(f"Error mapping question to schema: {e} | raw: {q}")
@@ -267,27 +261,27 @@ RULES:
   "difficulty": "...",
   "question_text": "...",
   "explanation": "...",
-  "options": [...] or null,
-  "expected_answer": "...",
-  "grading_rubric": {{...}} or null
+  "expected_answer": "..."
 }}
-3. For multiple_choice: options must be exactly 4 items:
-   [{{"id":"A","text":"..."}},{{"id":"B","text":"..."}},{{"id":"C","text":"..."}},{{"id":"D","text":"..."}}]
-   expected_answer must be the option id: "A", "B", "C", or "D"
-   grading_rubric must be null
+3. For multiple_choice: 
+   - You MUST include an "options" array with exactly 4 items: [{{"id":"A","text":"..."}},{{"id":"B","text":"..."}},{{"id":"C","text":"..."}},{{"id":"D","text":"..."}}]
+   - expected_answer must be "A", "B", "C", or "D"
+   - grading_rubric must be null
 
-4. For true_false: options must be:
-   [{{"id":"true","text":"True"}},{{"id":"false","text":"False"}}]
-   expected_answer must be "true" or "false"
-   grading_rubric must be null
+4. For true_false: 
+   - You MUST include an "options" array with exactly 2 items: [{{"id":"true","text":"True"}},{{"id":"false","text":"False"}}]
+   - expected_answer must be "true" or "false"
+   - grading_rubric must be null
 
-5. For short_answer: options must be null
-   grading_rubric must be:
-   {{"type":"key_points","items":["point 1","point 2","point 3"]}}
+5. For short_answer: 
+   - Do NOT include an "options" array (or set it to null)
+   - You MUST include a "grading_rubric" object exactly like this:
+     {{"key_points":["point 1","point 2","point 3"]}}
 
-6. For essay: options must be null
-   grading_rubric must be:
-   {{"type":"criteria","items":[{{"name":"...","description":"..."}},{{"name":"...","description":"..."}}]}}
+6. For essay: 
+   - Do NOT include an "options" array (or set it to null)
+   - You MUST include a "grading_rubric" object exactly like this:
+     {{"criteria":[{{"name":"...","description":"..."}},{{"name":"...","description":"..."}}]}}
 
 7. Difficulty must exactly match the requested level: "easy", "medium", or "hard"
 8. Base ALL questions strictly on the provided content — do not use outside knowledge

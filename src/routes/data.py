@@ -67,7 +67,8 @@ async def _download_and_process_background(
         asset_project_id=project.id,
         asset_type=AssetTypeEnum.FILE.value,
         asset_name=file_id,
-        asset_size=os.path.getsize(file_path)
+        asset_size=os.path.getsize(file_path),
+        asset_config={"material_id": payload.body.material_id}
     )
     asset_record = await asset_model.create_asset(asset=asset_resource)
     
@@ -165,7 +166,8 @@ async def ingest_document_webhook(
     """
     Production webhook endpoint to receive a document download URL from the main Learnova backend.
     """
-    project_id = str(payload.body.material_id)
+    # project_id = str(payload.body.material_id)
+    project_id = str(payload.course_id)
     
     project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
     project = await project_model.get_project_or_create_one(project_id=project_id)
@@ -357,9 +359,13 @@ async def _master_process_background(
         logger.info("Generating structure/topics to include in the callback...")
         structure_controller = StructureController(generation_client=app.generation_client)
         
+        # --- NEW: Grab the specific asset_id of the file we just processed ---
+        asset_id = list(project_files_ids.keys())[0] if project_files_ids else None
+
         normalized_topics, analysis_status = await structure_controller.analyze_material_structure(
             chunk_model=chunk_model,
             project_id=project.project_id,
+            asset_id=asset_id,
             max_topics=None,
             use_all_chunks=False
         )
