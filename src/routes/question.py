@@ -1,10 +1,12 @@
 import logging
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request, status, BackgroundTasks, Depends
 from fastapi.responses import JSONResponse
+
 from routes.schemas.question import (
     GenerateQuestionsRequest,
     GenerateQuestionsResponse,
-    TopicError
+    TopicError,
+    QuestionWebhookPayload
 )
 from routes.schemas.data import ProcessRequest
 from models.ProjectModel import ProjectModel
@@ -16,7 +18,13 @@ from controllers.ProcessController import ProcessController
 from models.enums.ResponseEnums import ResponseSignal
 from models.enums.AssetTypeEnum import AssetTypeEnum
 
+from core.security.dependencies import verify_backend_signature
+from core.security.callback import send_webhook_callback
+
+import json
+
 logger = logging.getLogger('uvicorn.error')
+logger.setLevel(logging.INFO) # Turned the lights on for debugging!
 
 question_router = APIRouter(
     prefix="/api/v1/courses",
@@ -133,69 +141,109 @@ async def process_for_questions(
 
 
 # =============================================================
-# STEP 2: Generate questions using question chunks
+# STEP 2: Generate questions using question chunks (WEBHOOK)
 # =============================================================
 
-@question_router.post("/{project_id}/questions/generate", response_model=GenerateQuestionsResponse)
-async def generate_questions(
-    request: Request,
-    project_id: str,
-    generate_request: GenerateQuestionsRequest
+async def _generate_questions_background(
+    app, project, payload: QuestionWebhookPayload
 ):
-    """
-    Generate questions for a course based on topic configurations.
-    Reads only chunks with chunk_type='question'.
-    """
+    """Background task to generate questions and send the callback."""
+    logger.info(f"Background Task: Generating questions for course {project.project_id}")
+    
+    chunk_model = await ChunkModel.create_instance(db_client=app.db_client)
+    controller = QuestionGenerationController(generation_client=app.question_generation_client)
 
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
-    )
-
-    project = await project_model.get_project_or_create_one(
-        project_id=project_id
-    )
-
-    if not project:
-        print("NOT PROJECT FOUND")
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content=GenerateQuestionsResponse(
-                request_id=generate_request.request_id,
-                course_id=generate_request.course_id,
-                project_id=project_id,
-                status="failed",
-                errors=[
-                    TopicError(
-                        topic_id=None,
-                        topic_title=None,
-                        reason=f"Project {project_id} not found in the AI system"
-                    )
-                ],
-                questions=[]
-            ).dict()
-        )
-
-    chunk_model = await ChunkModel.create_instance(
-        db_client=request.app.db_client
-    )
-
-    controller = QuestionGenerationController(
-        generation_client=request.app.question_generation_client
+    # Adapt the payload to fit the controller's existing logic
+    adapted_request = GenerateQuestionsRequest(
+        request_id=payload.request_id,
+        course_id=payload.course_id,
+        project_id=project.project_id, # Using course_id as the master project_id
+        topics=payload.body.topics
     )
 
     result = await controller.generate_all(
-        request=generate_request,
+        request=adapted_request,
         chunk_model=chunk_model
     )
 
-    print(result)
-    if result.status == "failed":
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content=result.dict()
+    # ==========================================
+    # FORMAT DATA EXACTLY AS BACKEND EXPECTS
+    # ==========================================
+    formatted_questions = []
+    
+    logger.info(f"============= Result ===================:\n{result}")
+
+    for q in result.questions:
+        q_dict = q.dict()
+        # The backend strict validation rejects this extra field, so we remove it
+        q_dict.pop("topic_title", None) 
+        formatted_questions.append(q_dict)
+
+    # DEBUG BLOCK - Updated to show what we are ACTUALLY sending now
+    callback_payload = {
+        "questions": formatted_questions
+    }
+    logger.info(f"SENDING THIS TO BACKEND:\n{json.dumps(callback_payload, indent=2)}")
+
+    # Send the Webhook Callback
+    if result.status == "completed" or result.status == "partial":
+        await send_webhook_callback(
+            request_id=payload.request_id,
+            course_id=payload.course_id,
+            operation_type=payload.operation_type,
+            status="success", # Changed from "success" to match backend expectation
+            message="Questions generated successfully.",
+            data={
+                "questions": formatted_questions
+                # REMOVED "errors" array completely!
+            }
+        )
+    else:
+        await send_webhook_callback(
+            request_id=payload.request_id,
+            course_id=payload.course_id,
+            operation_type=payload.operation_type,
+            status="failed",
+            message="Failed to generate questions. Check AI logs.",
+            # REMOVED material_id to prevent crashes!
+            data={
+                "questions": [] # Send empty questions on failure so his schema doesn't break
+            }
         )
 
+
+@question_router.post("/questions/generate")
+async def generate_questions_webhook(
+    request: Request,
+    payload: QuestionWebhookPayload,
+    background_tasks: BackgroundTasks,
+    secure_request_id: str = Depends(verify_backend_signature) # THE GATEKEEPER
+):
+    """
+    Webhook Endpoint: Generate questions asynchronously and return via callback.
+    """
+    # Use the course_id as the master project_id to search across all files in the course
+    project_id = str(payload.course_id)
+
+    project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
+    project = await project_model.get_project_or_create_one(project_id=project_id)
+
+    if not project:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"message": f"Course ID {project_id} not found in the AI system."}
+        )
+
+    # Toss it to the background so we don't timeout the HTTP request!
+    background_tasks.add_task(
+        _generate_questions_background,
+        app=request.app, project=project, payload=payload
+    )
+
     return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content=result.dict()
+        content={
+            "status": "processing_started",
+            "request_id": secure_request_id,
+            "message": "Question generation queued successfully."
+        }
     )

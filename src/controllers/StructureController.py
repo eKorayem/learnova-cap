@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any, Tuple
 import json
 import re
 import logging
-
+import time
 
 class StructureController(BaseController):
     """
@@ -15,7 +15,8 @@ class StructureController(BaseController):
     def __init__(self, generation_client=None):
         super().__init__()
         self.generation_client = generation_client
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger('uvicorn.error')
+        self.logger.setLevel(logging.INFO)
 
         # Document type detection thresholds
         self.BOOK_CHUNK_THRESHOLD = 30
@@ -36,16 +37,17 @@ class StructureController(BaseController):
         chunk_model: ChunkModel,
         project_id: str,
         max_topics: int = None,
+        asset_id: str = None, # <--- NEW PARAMETER
         use_all_chunks: bool = False
     ) -> dict:
-        import time # <--- Make sure this is imported at the top of the file!
+        
         start_time = time.time()
 
         self.logger.info(f"========== [STARTED] STRUCTURE EXTRACTION FOR PROJECT {project_id} ==========")
         
         # 1. Fetch chunks
         chunks = await chunk_model.get_chunks_by_project_id(
-            project_id=project_id, page_no=1, page_size=3000, chunk_type="structure"
+            project_id=project_id, page_no=1, page_size=3000, chunk_type="structure", asset_id=asset_id
         )
 
         if not chunks:
@@ -89,7 +91,7 @@ class StructureController(BaseController):
         approx_in_tokens = len(prompt) // 4
         
         # Log the exact prompt being sent (useful for checking Arabic handling)
-        print(f"\n[DEBUG] === EXACT PROMPT SENT TO LLM ===\n{prompt}\n========================================\n")
+        print(f"\n[DEBUG] === EXACT PROMPT SENT TO LLM ===\n{prompt}\n========================================\n", flush=True)
 
         # 4. Generate AI Prompt
         try:
@@ -143,11 +145,12 @@ class StructureController(BaseController):
         self,
         chunk_model: ChunkModel,
         project_id: str,
+        asset_id: str = None,
         max_topics: int = None,
         use_all_chunks: bool = False
     ) -> tuple:
         raw_structure = await self.analyze_lecture_structure(
-            chunk_model=chunk_model, project_id=project_id,
+            chunk_model=chunk_model, project_id=project_id, asset_id=asset_id, # <--- PASSED DOWN
             max_topics=max_topics, use_all_chunks=use_all_chunks
         )
         normalized = self.normalize_structure(raw_structure)
