@@ -1,6 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Any
-
+from typing import List, Optional, Any, Dict
 
 # =============================================================
 # REQUEST SCHEMAS (Backend → AI System)
@@ -29,12 +28,6 @@ class GenerateQuestionsRequest(BaseModel):
 # RESPONSE SCHEMAS (AI System → Backend)
 # =============================================================
 
-class GradingRubric(BaseModel):
-    type: str           # "key_points" or "criteria"
-    items: List[Any]
-    # for key_points: items is List[str]
-    # for criteria:   items is List[dict] with "name" and "description" keys
-
 
 class QuestionResponse(BaseModel):
     topic_id: int
@@ -45,8 +38,8 @@ class QuestionResponse(BaseModel):
     explanation: Optional[str] = None
     options: Optional[List[dict]] = None   # [{"id": "A", "text": "..."}]
     expected_answer: str
-    grading_rubric: Optional[GradingRubric] = None
-
+    # Changed from GradingRubric to Dict to accept the backend's dynamic shapes
+    grading_rubric: Optional[Dict[str, Any]] = None
 
 class TopicError(BaseModel):
     topic_id: Optional[int] = None
@@ -61,3 +54,16 @@ class GenerateQuestionsResponse(BaseModel):
     status: str                         # "completed", "partial", "failed"
     errors: List[TopicError] = []
     questions: List[QuestionResponse] = []
+
+
+class QuestionGenerationBody(BaseModel):
+    # Removed material_id completely!
+    topics: List[TopicQuestionRequest]
+
+class QuestionWebhookPayload(BaseModel):
+    request_id: str
+    timestamp: str
+    operation_type: str
+    course_id: int
+    body: QuestionGenerationBody
+
