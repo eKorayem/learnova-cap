@@ -1,4 +1,5 @@
 # Learnova AI Backend (Capstone Project)
+# Learnova-CAP
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)
@@ -100,3 +101,4 @@ The Learnova platform was developed collaboratively as a Senior Capstone Project
 This repository contains the AI Backend Engine. The full Learnova platform is decoupled into separate repositories:
 * **Frontend Application:** []
 * **Backend Engine:** (This Repository)
+Download the postman collection from [/assets/mini-rag-app.postman_collection](/assets/mini-rag-app.postman_collection)
