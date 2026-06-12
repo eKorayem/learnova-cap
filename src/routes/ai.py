@@ -67,6 +67,20 @@ async def analyze_material_structure(
             ).dict()
         )
 
+    # --- NEW: Find the specific asset_id for this material_id ---
+    asset_model = await AssetModel.create_instance(db_client=request.app.db_client)
+    project_files = await asset_model.get_all_projects_assets(
+        asset_project_id=project.id,
+        asset_type=AssetTypeEnum.FILE.value
+    )
+    
+    target_asset_id = None
+    for asset in project_files:
+        if asset.asset_config and asset.asset_config.get("material_id") == analyze_request.material_id:
+            target_asset_id = asset.id
+            break
+    # -----------------------------------------------------------
+    
     structure_controller = StructureController(
         generation_client=request.app.generation_client
     )
