@@ -1,12 +1,14 @@
 import logging
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request, status, BackgroundTasks, Depends
 from fastapi.responses import JSONResponse
-from routes.schemas.nlp import PushRequest, SearchRequest
+from routes.schemas.nlp import PushRequest, SearchRequest, RagChatWebhookPayload
 from models.ProjectModel import ProjectModel
 from models.ChunkModel import ChunkModel
 from models.enums.ResponseEnums import ResponseSignal
 from controllers import NLPController
-from models import ResponseSignal
+
+from core.security.dependencies import verify_backend_signature
+from core.security.callback import send_webhook_callback
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -197,5 +199,79 @@ async def answer_question(request: Request, project_id: str, search_request: Sea
             "answer": answer,
             "full_prompt": full_prompt,
             "chat_history": chat_history
+        }
+    )
+
+
+# =============================================================
+# WEBHOOK: ASYNC RAG CHAT
+# =============================================================
+
+async def _rag_chat_background(app, payload: RagChatWebhookPayload):
+    """Background task to generate chat response and send callback."""
+    logger.info(f"Background Task: RAG Chat for course {payload.course_id}")
+    
+    project_model = await ProjectModel.create_instance(db_client=app.db_client)
+    # The payload uses course_id as the top-level project_id
+    project = await project_model.get_project_or_create_one(project_id=str(payload.course_id))
+
+    nlp_controller = NLPController(
+        vectordb_client=app.vectordb_client,
+        generation_client=app.generation_client,
+        embedding_client=app.embedding_client,
+        template_parser=app.template_parser
+    )
+
+    # Note: To fully support the history array, you will eventually 
+    # need to update answer_rag_question in NLPController to accept it.
+    answer, full_prompt, updated_history = await nlp_controller.answer_rag_question(
+        project=project,
+        query=payload.body.message,
+        chat_history=payload.body.history, # <--- ADD THIS LINE
+        limit=5
+    )
+
+    # Format exactly as the backend expects
+    callback_data = {
+        "session_id": payload.body.session_id,
+        "message_id": payload.body.message_id,
+        "content": answer if answer else "System encountered an error generating the response.",
+        "sources": [] # TODO: Update NLPController to extract document sources
+    }
+
+    status_val = "success" if answer else "failed"
+    
+    await send_webhook_callback(
+        request_id=payload.request_id,
+        course_id=payload.course_id,
+        operation_type=payload.operation_type,
+        status=status_val,
+        message="Chat response generated successfully." if answer else "Chat failed.",
+        data=callback_data
+    )
+
+
+@nlp_router.post("/rag/answer")
+async def rag_chat_webhook(
+    request: Request, 
+    payload: RagChatWebhookPayload,
+    background_tasks: BackgroundTasks,
+    secure_request_id: str = Depends(verify_backend_signature) # <-- THE GATEKEEPER
+):
+    """
+    Secure webhook for RAG chat processing.
+    Notice there is no {project_id} in the URL anymore!
+    """
+    # Throw the heavy lifting to the background
+    background_tasks.add_task(
+        _rag_chat_background,
+        app=request.app, payload=payload
+    )
+
+    return JSONResponse(
+        content={
+            "status": "processing_started",
+            "request_id": secure_request_id,
+            "message": "RAG chat queued successfully."
         }
     )

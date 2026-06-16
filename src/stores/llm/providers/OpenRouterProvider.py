@@ -117,6 +117,8 @@ class OpenRouterProvider(LLMInterface):
                 temperature=self.default_generation_temperature,
                 response_format={"type": "json_object"}
             )
+            result = response.choices[0].message.content
+            print(f"\n=== RAW LLM RESPONSE ===\n{result}\n========================\n", flush=True)
             return response.choices[0].message.content
 
         except Exception as e:

@@ -142,8 +142,8 @@ class NLPController(BaseController):
 
         return search_results
 
-    async def answer_rag_question(self, project: Project, query: str, limit: int = 10):
-        answer, full_prompt, chat_history = None, None, None
+    async def answer_rag_question(self, project: Project, query: str, chat_history: list = None, limit: int = 10):
+        answer, full_prompt, formatted_history = None, None, None
 
         # step1: Retrieve related documents
         retrieved_documents = await self.search_vector_db_collection(
@@ -153,7 +153,7 @@ class NLPController(BaseController):
         )
 
         if not retrieved_documents or len(retrieved_documents) == 0:
-            return answer, full_prompt, chat_history
+            return answer, full_prompt, formatted_history
 
         # step2: Construct LLM prompt
         system_prompt = self.template_parser.get("rag", "system_prompt")
@@ -171,20 +171,34 @@ class NLPController(BaseController):
         })
 
         # step3: Construct generation client prompts
-        chat_history = [
+        formatted_history = [
             self.generation_client.construct_prompt(
                 prompt=system_prompt,
                 role=self.generation_client.enums.SYSTEM.value
             )
         ]
 
+        # Inject previous conversation history here!
+        if chat_history:
+            for msg in chat_history:
+                # Handle both dict and Pydantic object formats
+                role = msg.role if hasattr(msg, 'role') else msg.get('role')
+                content = msg.content if hasattr(msg, 'content') else msg.get('content')
+                
+                formatted_history.append(
+                    self.generation_client.construct_prompt(
+                        prompt=content,
+                        role=role
+                    )
+                )
+
         full_prompt = "\n\n".join([documents_prompts, footer_prompt])
 
-        # Use async generation if available (Groq, OpenAI, etc.)
+        # Use async generation if available
         if hasattr(self.generation_client, 'generate_text_async'):
             answer = await self.generation_client.generate_text_async(
                 prompt=full_prompt,
-                chat_history=chat_history,
+                chat_history=formatted_history,
             )
         else:
             # Fallback to sync (runs in thread pool)
@@ -192,7 +206,7 @@ class NLPController(BaseController):
             answer = await asyncio.to_thread(
                 self.generation_client.generate_text,
                 prompt=full_prompt,
-                chat_history=chat_history,
+                chat_history=formatted_history,
             )
 
-        return answer, full_prompt, chat_history
+        return answer, full_prompt, formatted_history
