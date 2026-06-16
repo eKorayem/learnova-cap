@@ -137,3 +137,7 @@ class SentenceTransformerProvider(LLMInterface):
         except Exception as e:
             self.logger.error(f"Error during batch embedding: {e}")
             return None
+        
+
+    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict):
+        raise NotImplementedError("SentenceTransformerProvider does not support text generation.")

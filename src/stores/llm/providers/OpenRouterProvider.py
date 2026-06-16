@@ -93,3 +93,32 @@ class OpenRouterProvider(LLMInterface):
             "role": role,
             "content": self.process_text(prompt)
         }
+    
+    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict):
+        if not self.client or not self.generation_model_id:
+            self.logger.error("OpenRouterProvider: client or model not initialized")
+            return None
+
+        # Force JSON output instructions
+        import json
+        schema_instruction = f"\n\nYou MUST return ONLY valid JSON matching this schema:\n{json.dumps(response_schema)}"
+        
+        messages = [
+            {"role": "system", "content": system_prompt + schema_instruction},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            # We use an async wrapper or just run it sync depending on your client setup
+            response = self.client.chat.completions.create(
+                model=self.generation_model_id,
+                messages=messages,
+                max_tokens=self.defualt_generation_max_out_tokens,
+                temperature=self.default_generation_temperature,
+                response_format={"type": "json_object"}
+            )
+            return response.choices[0].message.content
+
+        except Exception as e:
+            self.logger.error(f"OpenRouterProvider structured generation error: {e}")
+            return None

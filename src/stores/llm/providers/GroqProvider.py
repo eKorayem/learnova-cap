@@ -128,3 +128,30 @@ class GroqProvider(LLMInterface):
             "role" : role, 
             "content" : self.process_text(prompt)
         }
+    
+    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict):
+        if not self.client or not self.generation_model_id:
+            self.logger.error("GroqProvider: client or model not initialized")
+            return None
+
+        import json
+        schema_instruction = f"\n\nYou MUST return ONLY valid JSON matching this schema:\n{json.dumps(response_schema)}"
+        
+        messages = [
+            {"role": "system", "content": system_prompt + schema_instruction},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.generation_model_id,
+                messages=messages,
+                max_tokens=self.defualt_generation_max_out_tokens,
+                temperature=self.default_generation_temperature,
+                response_format={"type": "json_object"}
+            )
+            return response.choices[0].message.content
+
+        except Exception as e:
+            self.logger.error(f"GroqProvider structured generation error: {e}")
+            return None

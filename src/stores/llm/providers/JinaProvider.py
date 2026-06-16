@@ -140,3 +140,6 @@ class JinaProvider(LLMInterface):
 
         self.logger.info(f"Jina complete — {len(all_vectors)} vectors")
         return all_vectors
+    
+    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict):
+        raise NotImplementedError("JinaProvider does not support text generation.")
