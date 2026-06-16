@@ -24,4 +24,8 @@ class LLMInterface(ABC):
     def construct_prompt(self, prompt: str, role: str):
         pass
     
-    
+    @abstractmethod
+    def generate_structured_response(self, prompt: str, schema: dict = None, chat_history: list=[],
+                                     max_output_tokens: int=None,
+                                     temperature: float = None):
+        pass
