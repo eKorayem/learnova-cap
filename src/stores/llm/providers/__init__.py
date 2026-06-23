@@ -5,3 +5,4 @@ from .SentenceTransformerProvider import SentenceTransformerProvider
 from .OpenRouterProvider import OpenRouterProvider
 from .JinaProvider import JinaProvider
 from .DeepSeekProvider import DeepSeekProvider
+from .AnthropicProvider import AnthropicProvider 

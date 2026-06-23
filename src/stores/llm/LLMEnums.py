@@ -8,6 +8,7 @@ class LLMEnums(Enum):
     OPENROUTER = "OPENROUTER"         
     JINA = "JINA"  
     DEEPSEEK = "DEEPSEEK"  # <--- ADD THIS
+    ANTHROPIC = "ANTHROPIC"
 
 class OpenAIEnums(Enum):
     SYSTEM = "system"
@@ -30,3 +31,7 @@ class GroqEnums(Enum):
     SYSTEM = "system"
     USER = "user"
 
+class AnthropicEnums(Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
