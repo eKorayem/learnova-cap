@@ -59,7 +59,17 @@ async def _download_and_process_background(
                         await f.write(chunk)
     except Exception as e:
         logger.error(f"Failed to download file from {download_url}: {e}")
-        # TODO: Send failure callback to Learnova backend here
+        # Send failure callback to prevent infinite waiting on the backend
+        await send_webhook_callback(
+            request_id=payload.request_id,
+            course_id=payload.course_id,
+            operation_type=payload.operation_type,
+            status="failed",
+            message=f"Download failed: {str(e)[:100]}",
+            module_id=payload.body.module_id,
+            material_id=payload.body.material_id
+        )
+    
         return
 
     asset_model = await AssetModel.create_instance(db_client=app.db_client)
@@ -357,7 +367,9 @@ async def _master_process_background(
         # GENERATE STRUCTURE FOR THE FAT PAYLOAD
         # ========================================================
         logger.info("Generating structure/topics to include in the callback...")
-        structure_controller = StructureController(generation_client=app.generation_client)
+        structure_controller = StructureController(
+            generation_client=app.structure_client # <-- Updated!
+        )
         
         # --- NEW: Grab the specific asset_id of the file we just processed ---
         asset_id = list(project_files_ids.keys())[0] if project_files_ids else None

@@ -209,4 +209,4 @@ class NLPController(BaseController):
                 chat_history=formatted_history,
             )
 
-        return answer, full_prompt, formatted_history
+        return answer, full_prompt, formatted_history, retrieved_documents

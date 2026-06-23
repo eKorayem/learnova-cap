@@ -82,7 +82,7 @@ async def analyze_material_structure(
     # -----------------------------------------------------------
     
     structure_controller = StructureController(
-        generation_client=request.app.generation_client
+        generation_client=request.app.structure_client
     )
 
     # Analyze structure and get normalized flat topics

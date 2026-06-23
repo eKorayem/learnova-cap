@@ -21,7 +21,7 @@ async def _grade_exam_background(
     logger.info(f"Background Task: Grading exam {payload.body.exam_id} (Attempt: {payload.body.attempt_id})")
     
     # Initialize the controller using the app's LLM client
-    controller = GradingController(generation_client=app.question_generation_client)
+    controller = GradingController(generation_client=app.grading_client) # <-- Updated!
 
     # Run the grading engine
     graded_results = await controller.evaluate_exam(request_data=payload.body)

@@ -151,7 +151,7 @@ async def _generate_questions_background(
     logger.info(f"Background Task: Generating questions for course {project.project_id}")
     
     chunk_model = await ChunkModel.create_instance(db_client=app.db_client)
-    controller = QuestionGenerationController(generation_client=app.question_generation_client)
+    controller = QuestionGenerationController(generation_client=app.qgen_client) # <-- Updated!
 
     # Adapt the payload to fit the controller's existing logic
     adapted_request = GenerateQuestionsRequest(

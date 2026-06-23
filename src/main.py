@@ -36,10 +36,22 @@ async def startup_span():
     llm_provider_factory = LLMProviderFactory(settings)
     vectordb_provider_factory = VectorDBProviderFactory(settings)
 
-    # ── RAG: Generation Client ──────────────────────────────────
+    # ── 1. RAG CHAT CLIENT ──────────────────────────────────────
     app.generation_client = llm_provider_factory.create(provider=settings.GENERATION_BACKEND)
     app.generation_client.set_generation_model(model_id=settings.GENERATION_MODEL_ID)
 
+    # ── 2. STRUCTURE EXTRACTION CLIENT ──────────────────────────
+    app.structure_client = llm_provider_factory.create(provider=settings.STRUCTURE_BACKEND)
+    app.structure_client.set_generation_model(model_id=settings.STRUCTURE_MODEL_ID)
+
+    # ── 3. QUESTION GENERATION CLIENT ───────────────────────────
+    app.qgen_client = llm_provider_factory.create(provider=settings.QUESTION_GENERATION_BACKEND)
+    app.qgen_client.set_generation_model(model_id=settings.QUESTION_GENERATION_MODEL_ID)
+
+    # ── 4. EXAM GRADING CLIENT ──────────────────────────────────
+    app.grading_client = llm_provider_factory.create(provider=settings.GRADING_BACKEND)
+    app.grading_client.set_generation_model(model_id=settings.GRADING_MODEL_ID)
+    
     # ── RAG: Embedding Client ───────────────────────────────────
     app.embedding_client = llm_provider_factory.create(provider=settings.EMBEDDING_BACKEND)
     app.embedding_client.set_embedding_model(
@@ -57,14 +69,6 @@ async def startup_span():
     app.template_parser = TemplateParser(
         language=settings.PRIMARY_LAN,
         default_language=settings.DEFAULT_LAN
-    )
-
-    # ── Question Generation Client (separate from RAG) ──────────
-    app.question_generation_client = llm_provider_factory.create(
-        provider=settings.QUESTION_GENERATION_BACKEND
-    )
-    app.question_generation_client.set_generation_model(
-        model_id=settings.QUESTION_GENERATION_MODEL_ID
     )
 
 async def shutdown_span():

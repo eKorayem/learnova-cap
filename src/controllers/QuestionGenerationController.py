@@ -129,7 +129,7 @@ class QuestionGenerationController(BaseController):
             self.logger.warning(f"No chunks found for project {project_id}")
             return None
 
-        # Sort by chunk_order
+        # Sort chronologically by default
         chunks = sorted(chunks, key=lambda c: c.chunk_order)
 
         # Filter chunks relevant to this topic using keyword matching
@@ -141,23 +141,34 @@ class QuestionGenerationController(BaseController):
 
         relevant_chunks = []
         if topic_keywords:
+            scored_chunks = []
             for chunk in chunks:
                 chunk_lower = chunk.chunk_text.lower()
-                if any(keyword in chunk_lower for keyword in topic_keywords):
-                    relevant_chunks.append(chunk)
+                # Score based on density of search hits in this chunk
+                score = sum(1 for keyword in topic_keywords if keyword in chunk_lower)
+                if score > 0:
+                    scored_chunks.append((score, chunk))
+            
+            # Sort by density score descending
+            scored_chunks.sort(key=lambda x: x[0], reverse=True)
+            # Take top 20 best context matches to protect context windows
+            relevant_chunks = [item[1] for item in scored_chunks[:20]]
 
-        # Fallback: use first 10 chunks if no relevant ones found
+        # Fallback: use first 10 chunks if no relevant matches are found
         if not relevant_chunks:
             self.logger.warning(
                 f"No relevant chunks found for topic '{topic_title}', "
                 f"falling back to first 10 chunks"
             )
             relevant_chunks = chunks[:10]
+        else:
+            # Re-sort matches back into reading order so the LLM parses the narrative correctly
+            relevant_chunks = sorted(relevant_chunks, key=lambda c: c.chunk_order)
 
         # Join chunk texts
         full_text = "\n\n".join([c.chunk_text for c in relevant_chunks])
 
-        # Truncate to max allowed characters for question generation
+        # Truncate to max allowed characters for question generation safety
         max_chars = self.app_settings.QUESTION_CHUNK_SIZE * 10
         if len(full_text) > max_chars:
             full_text = full_text[:max_chars]

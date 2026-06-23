@@ -13,9 +13,10 @@ class Settings(BaseSettings):
     MONGODB_URL: str
     MONGODB_DATABASE: str
 
-    # ======================= LLM CONFIG =======================
+    # ======================= LLM CONFIG (RAG Chat) =======================
 
     GENERATION_BACKEND: str
+    GENERATION_MODEL_ID: Optional[str] = None
     EMBEDDING_BACKEND: str
 
     # Use Optional for anything that defaults to None
@@ -24,7 +25,6 @@ class Settings(BaseSettings):
     COHERE_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
 
-    GENERATION_MODEL_ID: Optional[str] = None
     EMBEDDING_MODEL_ID: Optional[str] = None
     EMBEDDING_MODEL_SIZE: Optional[int] = None
 
@@ -37,6 +37,11 @@ class Settings(BaseSettings):
 
     DEEPSEEK_API_KEY: Optional[str] = None
 
+    # ======================= AWS Anthropic Config =======================
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    AWS_REGION_NAME: str = "us-east-1" # Default region for Bedrock
+
     # ======================= Chunking Config =======================
 
     RAG_CHUNK_SIZE: int = 100
@@ -44,19 +49,29 @@ class Settings(BaseSettings):
     STRUCTURE_CHUNK_SIZE: int = 1000
     STRUCTURE_OVERLAP_SIZE: int = 100
 
+    # ======================= Structure Analysis Config =======================
+
+    STRUCTURE_BACKEND: str = "OPENROUTER"
+    STRUCTURE_MODEL_ID: str = "google/gemini-2.0-flash-exp:free"
+
     # ======================= Question Generation Config =======================
 
     QUESTION_GENERATION_BACKEND: str = "OPENROUTER"
-    QUESTION_GENERATION_MODEL_ID: str = "qwen/qwen3.6-plus-preview:free"
+    QUESTION_GENERATION_MODEL_ID: str = "qwen/qwen-2.5-72b-instruct:free"
     QUESTION_OPENAI_API_KEY: Optional[str] = None    # OpenRouter API key
-    QUESTION_CHUNK_SIZE: int = 1500        
-    QUESTION_OVERLAP_SIZE: int = 150       
+    QUESTION_CHUNK_SIZE: int = 1500       
+    QUESTION_OVERLAP_SIZE: int = 150      
+
+    # ======================= Exam Grading Config =======================
+
+    GRADING_BACKEND: str = "OPENROUTER"
+    GRADING_MODEL_ID: str = "meta-llama/llama-3.3-70b-instruct:free"
 
     # ======================= VectorDB CONFIG =======================
 
     VECTOR_DB_BACKEND: str
     VECTOR_DB_PATH: Optional[str] = None   # Made optional so Docker can ignore it
-    VECTOR_DB_URL: Optional[str] = None 
+    VECTOR_DB_URL: Optional[str] = None
     VECTOR_DB_DISTANCE_METHOD: Optional[str] = None
 
     # ============================ Template Configurations ============================

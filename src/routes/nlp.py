@@ -179,7 +179,8 @@ async def answer_question(request: Request, project_id: str, search_request: Sea
         template_parser=request.app.template_parser
     )
 
-    answer, full_prompt, chat_history = await nlp_controller.answer_rag_question(
+    # ADDED THE TRAILING UNDERSCORE HERE TO GRAB THE 4TH VARIABLE
+    answer, full_prompt, chat_history, _ = await nlp_controller.answer_rag_question(
         project=project,
         query=search_request.text,
         limit=search_request.limit
@@ -224,19 +225,19 @@ async def _rag_chat_background(app, payload: RagChatWebhookPayload):
 
     # Note: To fully support the history array, you will eventually 
     # need to update answer_rag_question in NLPController to accept it.
-    answer, full_prompt, updated_history = await nlp_controller.answer_rag_question(
+    answer, full_prompt, updated_history, sources = await nlp_controller.answer_rag_question(
         project=project,
         query=payload.body.message,
-        chat_history=payload.body.history, # <--- ADD THIS LINE
+        chat_history=payload.body.history, 
         limit=5
     )
 
-    # Format exactly as the backend expects
+    # Format exactly as the backend expects, injecting the sources
     callback_data = {
         "session_id": payload.body.session_id,
         "message_id": payload.body.message_id,
         "content": answer if answer else "System encountered an error generating the response.",
-        "sources": [] # TODO: Update NLPController to extract document sources
+        "sources": [source.dict() for source in sources] if sources else []
     }
 
     status_val = "success" if answer else "failed"
