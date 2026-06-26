@@ -92,9 +92,9 @@ async def _download_and_process_background(
         do_reset=0,
         request_id=payload.request_id,
         course_id=payload.course_id,
-        operation_type=payload.operation_type, # <--- Pass it down
-        module_id=payload.body.module_id,    # <--- ADDED
-        material_id=payload.body.material_id # <--- ADDED
+        operation_type=payload.operation_type,
+        module_id=payload.body.module_id,
+        material_id=payload.body.material_id
     )
 
 
@@ -171,12 +171,11 @@ async def ingest_document_webhook(
     request: Request,
     payload: DocumentWebhookPayload,
     background_tasks: BackgroundTasks,
-    request_id: str = Depends(verify_backend_signature) # <-- THE GATEKEEPER
+    request_id: str = Depends(verify_backend_signature)
 ):
     """
     Production webhook endpoint to receive a document download URL from the main Learnova backend.
     """
-    # project_id = str(payload.body.material_id)
     project_id = str(payload.course_id)
     
     project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
@@ -281,7 +280,7 @@ async def process_endpoint(request: Request, project_id: str, process_request: P
 async def _master_process_background(
     app, project, project_files_ids: dict, do_reset: int,
     request_id: str = None, course_id: int = None, operation_type: str = None,
-    module_id: int = None, material_id: int = None # <--- ADDED
+    module_id: int = None, material_id: int = None
 ):
     logger.info(f"Starting background processing for project: {project.project_id}")
     try:
@@ -363,15 +362,11 @@ async def _master_process_background(
 
         logger.info(f"✅ Master processing COMPLETE for project: {project.project_id}")
         
-        # ========================================================
-        # GENERATE STRUCTURE FOR THE FAT PAYLOAD
-        # ========================================================
         logger.info("Generating structure/topics to include in the callback...")
         structure_controller = StructureController(
-            generation_client=app.structure_client # <-- Updated!
+            generation_client=app.structure_client
         )
         
-        # --- NEW: Grab the specific asset_id of the file we just processed ---
         asset_id = list(project_files_ids.keys())[0] if project_files_ids else None
 
         normalized_topics, analysis_status = await structure_controller.analyze_material_structure(
@@ -382,15 +377,15 @@ async def _master_process_background(
             use_all_chunks=False
         )
         
-        # Cleaned up redundant if/else block!
         callback_data = {
+            "module_id": module_id,          
+            "material_id": material_id,      
             "topics": normalized_topics if analysis_status == "completed" else [],
             "learning_outcomes": [],                   
-            "topic_learning_outcome_relations": []     
+            "topic_learning_outcome_relations": [],
+            "questions": []  # FIX APPLIED HERE
         }
-        # ========================================================
 
-        # --- DYNAMIC CALLBACK TRIGGER ---
         if request_id and course_id and operation_type:
             await send_webhook_callback(
                 request_id=request_id,
@@ -405,7 +400,6 @@ async def _master_process_background(
 
     except Exception as e:
         logger.error(f"Error in master processing for {project.project_id}: {e}")
-        # Send failure callback if it crashes!
         if request_id and course_id and operation_type:
             safe_error_msg = f"Processing failed: {str(e).split('Raw response')[0].strip()}"
             
@@ -415,8 +409,8 @@ async def _master_process_background(
                 operation_type=operation_type,
                 status="failed",
                 message=safe_error_msg,
-                module_id=module_id,     # <--- ADDED SO FAILURE AVOIDS 400 BAD REQUEST!
-                material_id=material_id  # <--- ADDED
+                module_id=module_id,
+                material_id=material_id
             )
 
 @data_router.post("/{project_id}/process", status_code=status.HTTP_202_ACCEPTED)

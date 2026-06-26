@@ -98,11 +98,11 @@ class StructureController(BaseController):
                 
         else:
             llm_input = self._extract_headings_only(full_text, doc_type)
-            if len(llm_input.strip()) < 200:
+            if len(llm_input.strip()) < 50:
                 llm_input = full_text[:10000]
             prompt = self._build_lecture_prompt(llm_input, max_topics)
             strategy = "Lecture Slides"
-            
+
         # Hard cap input
         if len(llm_input) > self.MAX_LLM_INPUT_CHARS:
             llm_input = llm_input[:self.MAX_LLM_INPUT_CHARS]
@@ -382,7 +382,8 @@ class StructureController(BaseController):
             "references", "bibliography", "acknowledgements", "preface", "foreword",
             "dr.", "prof.", "professor", "faculty of", "university", "college of", "department of",
             "spring", "fall", "summer", "winter", "semester", "lecture", "session",
-            "thank you", "questions?", "q&a", "any questions", "agenda",
+            "thank you", "questions?", "q&a", "any questions", "agenda", "dr.", "dr ",
+            "prof.", "professor", "faculty of", "university", "college of", "thank you",
             # --- Arabic Noise ---
             "ملاحظة", "تنبيه", "شكل", "جدول", "حقوق الطبع", "ملخص", "مراجع",
             "شكر", "تمهيد", "إهداء", "غلاف", "دكتور", "أستاذ", "كلية", "جامعة", "قسم", "شكرا", "الأسئلة"
@@ -443,11 +444,11 @@ class StructureController(BaseController):
                 continue
     
 
+            # === INSTANT NOISE REJECTION ===
             if self._is_noise_or_non_structure(line):
                 consecutive_non_headings += 1
-                if consecutive_non_headings > 3:
-                    prev_blank = False
-                    continue
+                prev_blank = False # Noise breaks the empty-space chain
+                continue
 
             is_heading = False
 

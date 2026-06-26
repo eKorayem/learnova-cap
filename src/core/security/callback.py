@@ -1,3 +1,4 @@
+import json
 import httpx
 import logging
 from core.security.ai_protocol import build_ai_request_envelope, build_ai_request_headers, serialize_json_for_signing
@@ -12,8 +13,8 @@ async def send_webhook_callback(
     operation_type: str, 
     status: str, 
     message: str,
-    module_id: int = None,     # <--- ADDED
-    material_id: int = None,   # <--- ADDED
+    module_id: int = None,     
+    material_id: int = None,   
     data: dict = None
 ):
     """
@@ -49,6 +50,15 @@ async def send_webhook_callback(
     
     # Serialize and sign
     serialized_body = serialize_json_for_signing(payload_dict)
+    
+    # ========================================================
+    # 🚀 [DEBUG] EXACT JSON PAYLOAD SENT TO BACKEND
+    # ========================================================
+    print("\n" + "="*80)
+    print("🚀 [DEBUG] EXACT JSON PAYLOAD LEAVING THE AI SERVICE:")
+    print(json.dumps(payload_dict, indent=2))
+    print("="*80 + "\n")
+    # ========================================================
     
     signature = create_signature_from_bytes(
         secret=settings.AI_SHARED_SECRET,
