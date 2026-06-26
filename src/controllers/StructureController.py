@@ -56,7 +56,18 @@ class StructureController(BaseController):
 
         chunks = sorted(chunks, key=lambda c: c.chunk_order)
         total_chunks = len(chunks)
-        full_text = "\n\n".join([c.chunk_text for c in chunks])
+
+        # Inject the physical page number into the text stream so the LLM can see it
+        text_blocks = []
+        for c in chunks:
+            page_num = c.chunk_metadata.get('page')
+            if page_num is not None:
+                # PyMuPDF is 0-indexed, so we add 1 for human-readable page numbers
+                text_blocks.append(f"--- [PAGE {page_num + 1}] ---\n{c.chunk_text}")
+            else:
+                text_blocks.append(c.chunk_text)
+                
+        full_text = "\n\n".join(text_blocks)
         
         self.logger.info(f"DEBUG: Fetched {total_chunks} chunks. Total raw characters: {len(full_text)}")
 
@@ -66,23 +77,32 @@ class StructureController(BaseController):
         has_toc = toc_text is not None
 
         # 3. Dynamic Extraction Routing
+        # 3. Dynamic Extraction Routing
         if has_toc:
             llm_input = toc_text
             prompt = self._build_toc_prompt(llm_input, max_topics)
             strategy = "Table of Contents"
+            
         elif doc_type == "book":
             llm_input = self._extract_headings_only(full_text, doc_type)
-            if len(llm_input.strip()) < 200:
-                llm_input = full_text[:10000]
-            prompt = self._build_book_headings_prompt(llm_input, max_topics)
-            strategy = "Book Headings"
+            
+            # SAFETY NET: If the strict book regex deleted almost everything, it's likely a misclassified lecture.
+            if len(llm_input.strip()) < 1000:
+                self.logger.warning("Book strategy yielded too little text. Falling back to lecture strategy.")
+                llm_input = self._extract_headings_only(full_text, "lecture")
+                prompt = self._build_lecture_prompt(llm_input, max_topics)
+                strategy = "Lecture Slides (Fallback)"
+            else:
+                prompt = self._build_book_headings_prompt(llm_input, max_topics)
+                strategy = "Book Headings"
+                
         else:
             llm_input = self._extract_headings_only(full_text, doc_type)
             if len(llm_input.strip()) < 200:
                 llm_input = full_text[:10000]
             prompt = self._build_lecture_prompt(llm_input, max_topics)
             strategy = "Lecture Slides"
-
+            
         # Hard cap input
         if len(llm_input) > self.MAX_LLM_INPUT_CHARS:
             llm_input = llm_input[:self.MAX_LLM_INPUT_CHARS]
@@ -163,9 +183,10 @@ class StructureController(BaseController):
     def _detect_document_type(self, text: str, total_chunks: int) -> str:
         """
         Detects if document is a 'book' or 'lecture' based on keywords and size.
-        Book indicators: chapter markers, part/unit markers, ToC headers, Arabic equivalents.
         """
         text_lower = text.lower()
+        
+        # 1. Look for explicit book markers
         book_patterns = [
             r"\bchapter\s+\d+\b", r"\bchapter\s+[ivxlcdm]+\b", r"\bpart\s+[ivxlcdm\d]+\b",
             r"\bunit\s+\d+\b", r"\btable\s+of\s+contents?\b",
@@ -173,8 +194,17 @@ class StructureController(BaseController):
         ]
         book_hits = sum(1 for p in book_patterns if re.search(p, text_lower, re.IGNORECASE))
 
-        if book_hits >= 2 or (total_chunks > self.BOOK_CHUNK_THRESHOLD and len(text) > self.BOOK_CHAR_THRESHOLD):
+        # 2. Look for explicit lecture markers in the first 10k chars
+        lecture_hits = len(re.findall(r"\blecture\b|\bslide\b|\bpresentation\b", text_lower[:10000]))
+        
+        if lecture_hits > 3:
+            return "lecture" # Strong bias: If it says 'lecture' multiple times, it's a slide deck.
+
+        # 3. Size Thresholds (Significantly increased)
+        # 78k chars is a slide deck. Real books are usually > 200,000 chars.
+        if book_hits >= 2 or (total_chunks > 200 and len(text) > 200000):
             return "book"
+            
         return "lecture"
 
     def _extract_potential_toc(self, text: str) -> Optional[str]:
@@ -389,6 +419,8 @@ class StructureController(BaseController):
         heading_lines = []
         seen = set()
         consecutive_non_headings = 0
+        prev_blank = True
+        current_page = None
         
         # Bring back spatial awareness from the old version!
         prev_blank = True
@@ -399,10 +431,17 @@ class StructureController(BaseController):
             # Look ahead to see if the next line is empty
             next_blank = (i + 1 >= len(lines)) or (self._normalize_line(lines[i + 1]) == "")
 
+            # Intercept the injected page markers
+            page_match = re.match(r"^---\s*\[PAGE\s+(\d+)\]\s*---$", line, re.IGNORECASE)
+            if page_match:
+                current_page = page_match.group(1)
+                continue
+
             if not line:
                 consecutive_non_headings = 0
                 prev_blank = True
                 continue
+    
 
             if self._is_noise_or_non_structure(line):
                 consecutive_non_headings += 1
@@ -453,13 +492,22 @@ class StructureController(BaseController):
                 key = line.lower()
                 if key not in seen:
                     seen.add(key)
-                    heading_lines.append(line)
+                    # Append the page info so the LLM associates the heading with the page!
+                    if current_page:
+                        heading_lines.append(f"{line} (Page {current_page})")
+                    else:
+                        heading_lines.append(line)
                     consecutive_non_headings = 0
 
             # Update the blank tracker for the next loop iteration
+            
             prev_blank = False
 
         return "\n".join(heading_lines)
+
+    # =============================================================
+    # SCENARIO-SPECIFIC PROMPTS
+    # =============================================================
 
     # =============================================================
     # SCENARIO-SPECIFIC PROMPTS
@@ -480,6 +528,8 @@ CRITICAL RULES:
 4. Maximum 2 levels: topics and subtitles only
 5. Write a brief 1-sentence description for each item
 6. Output MUST be valid JSON matching the schema exactly
+7. Extract 'page_start' and 'page_end' integers if visible in the text (e.g., from ToC numbers or "(Page X)" labels).
+8. 'page_end' is typically the page before the next topic starts. If unknown, output null.
 {max_constraint}
 
 TABLE OF CONTENTS:
@@ -489,11 +539,13 @@ OUTPUT JSON SCHEMA (strict - no extra fields):
 {{
   "topics": [
     {{
-      "title": "exact title from ToC",
+      "title": "exact title",
       "description": "one sentence description",
       "order": 0,
+      "page_start": 1,
+      "page_end": 5,
       "subtitles": [
-        {{"title": "subtitle", "description": "one sentence", "order": 0}}
+        {{"title": "subtitle", "description": "one sentence", "order": 0, "page_start": 1, "page_end": 5}}
       ]
     }}
   ]
@@ -516,6 +568,8 @@ CRITICAL RULES:
 4. Preserve exact title wording in original language (English or Arabic)
 5. Write a brief 1-sentence description for each item
 6. Output MUST be valid JSON matching the schema exactly
+7. Extract 'page_start' and 'page_end' integers if visible in the text (e.g., from ToC numbers or "(Page X)" labels).
+8. 'page_end' is typically the page before the next topic starts. If unknown, output null.
 {max_constraint}
 
 EXTRACTED HEADINGS:
@@ -525,11 +579,13 @@ OUTPUT JSON SCHEMA (strict - no extra fields):
 {{
   "topics": [
     {{
-      "title": "chapter or main section title",
+      "title": "exact title",
       "description": "one sentence description",
       "order": 0,
+      "page_start": 1,
+      "page_end": 5,
       "subtitles": [
-        {{"title": "subsection title", "description": "one sentence", "order": 0}}
+        {{"title": "subtitle", "description": "one sentence", "order": 0, "page_start": 1, "page_end": 5}}
       ]
     }}
   ]
@@ -553,6 +609,8 @@ CRITICAL RULES:
 5. Support both English and Arabic content
 6. Write a brief 1-sentence description for each item
 7. Output MUST be valid JSON matching the schema exactly
+8. Extract 'page_start' and 'page_end' integers if visible in the text (e.g., from ToC numbers or "(Page X)" labels).
+9. 'page_end' is typically the page before the next topic starts. If unknown, output null.
 {max_constraint}
 
 SLIDE TITLES:
@@ -562,18 +620,20 @@ OUTPUT JSON SCHEMA (strict - no extra fields):
 {{
   "topics": [
     {{
-      "title": "main concept or slide title",
+      "title": "exact title",
       "description": "one sentence description",
       "order": 0,
+      "page_start": 1,
+      "page_end": 5,
       "subtitles": [
-        {{"title": "sub-concept", "description": "one sentence", "order": 0}}
+        {{"title": "subtitle", "description": "one sentence", "order": 0, "page_start": 1, "page_end": 5}}
       ]
     }}
   ]
 }}
 
 Return ONLY the JSON object, no markdown, no explanations."""
-
+    
     # =============================================================
     # PARSER & NORMALIZER
     # =============================================================
@@ -713,14 +773,18 @@ Return ONLY the JSON object, no markdown, no explanations."""
                 subtitles.append({
                     "title": sub_title,
                     "description": str(sub.get("description", "")).strip() or f"Subtopic of {title}",
-                    "order": sub.get("order", j) if isinstance(sub.get("order"), int) else j
+                    "order": sub.get("order", j) if isinstance(sub.get("order"), int) else j,
+                    "page_start": sub.get("page_start"),  # <--- PRESERVE PAGE START
+                    "page_end": sub.get("page_end")       # <--- PRESERVE PAGE END
                 })
 
             valid_topics.append({
                 "title": title,
                 "description": str(topic.get("description", "")).strip() or f"This section covers {title}",
                 "order": topic.get("order", i) if isinstance(topic.get("order"), int) else i,
-                "subtitles": subtitles
+                "subtitles": subtitles,
+                "page_start": topic.get("page_start"),  # <--- PRESERVE PAGE START
+                "page_end": topic.get("page_end")       # <--- PRESERVE PAGE END
             })
 
         return valid_topics[:50]  # Cap at 50 topics to prevent runaway
@@ -745,12 +809,7 @@ Return ONLY the JSON object, no markdown, no explanations."""
         }
 
     def normalize_structure(self, raw_structure: dict) -> List[Dict[str, Any]]:
-        """
-        Converts LLM structure to flat backend schema with temp_ids for database insertion.
-        Output format: [{temp_id, title, description, order_index, parent_temp_id}, ...]
-        """
         normalized = []
-
         if not raw_structure or "topics" not in raw_structure:
             return normalized
 
@@ -761,6 +820,62 @@ Return ONLY the JSON object, no markdown, no explanations."""
             if not title:
                 continue
 
+            # ==========================================
+            # PAGE RULE ENFORCEMENT ENGINE
+            # ==========================================
+            t_start = topic.get("page_start")
+            t_end = topic.get("page_end")
+            
+            try: t_start = int(t_start) if t_start is not None else None
+            except: t_start = None
+            try: t_end = int(t_end) if t_end is not None else None
+            except: t_end = None
+
+            # Rule 1 & 2: Both or none, and start must be <= end
+            if t_start is None or t_end is None or t_start > t_end:
+                t_start, t_end = None, None
+
+            has_sub_pages = False
+            valid_subtitles = []
+            
+            # First pass on subtitles to calculate bounds
+            for sub in topic.get("subtitles", []):
+                s_title = sub.get("title", "").strip()
+                if not s_title: continue
+                
+                s_start = sub.get("page_start")
+                s_end = sub.get("page_end")
+                try: s_start = int(s_start) if s_start is not None else None
+                except: s_start = None
+                try: s_end = int(s_end) if s_end is not None else None
+                except: s_end = None
+                
+                if s_start is None or s_end is None or s_start > s_end:
+                    s_start, s_end = None, None
+                else:
+                    has_sub_pages = True
+                    
+                sub["_clean_start"] = s_start
+                sub["_clean_end"] = s_end
+                sub["_clean_title"] = s_title
+                valid_subtitles.append(sub)
+
+            # Rule 4: Parent bounds children. If subtopics have valid pages, stretch the parent to encompass them.
+            if has_sub_pages:
+                min_start = min([s["_clean_start"] for s in valid_subtitles if s["_clean_start"] is not None], default=t_start)
+                max_end = max([s["_clean_end"] for s in valid_subtitles if s["_clean_end"] is not None], default=t_end)
+                
+                t_start = min(t_start, min_start) if t_start is not None else min_start
+                t_end = max(t_end, max_end) if t_end is not None else max_end
+                
+            # Rule 3: If the parent has no range, the subtopic cannot have one either.
+            if t_start is None or t_end is None:
+                t_start, t_end = None, None
+                for sub in valid_subtitles:
+                    sub["_clean_start"] = None
+                    sub["_clean_end"] = None
+            # ==========================================
+
             topic_counter += 1
             topic_temp_id = f"topic_{topic_counter}"
 
@@ -769,21 +884,21 @@ Return ONLY the JSON object, no markdown, no explanations."""
                 "title": title,
                 "description": topic.get("description", "").strip() or f"This section covers {title}",
                 "order_index": topic_counter - 1,
-                "parent_temp_id": None
+                "parent_temp_id": None,
+                "page_start": t_start,
+                "page_end": t_end
             })
 
-            for subtitle in topic.get("subtitles", []):
-                sub_title = subtitle.get("title", "").strip()
-                if not sub_title:
-                    continue
-
+            for subtitle in valid_subtitles:
                 topic_counter += 1
                 normalized.append({
                     "temp_id": f"topic_{topic_counter}",
-                    "title": sub_title,
+                    "title": subtitle["_clean_title"],
                     "description": subtitle.get("description", "").strip() or f"Subtopic under {title}",
                     "order_index": topic_counter - 1,
-                    "parent_temp_id": topic_temp_id
+                    "parent_temp_id": topic_temp_id,
+                    "page_start": subtitle["_clean_start"],
+                    "page_end": subtitle["_clean_end"]
                 })
 
         return normalized

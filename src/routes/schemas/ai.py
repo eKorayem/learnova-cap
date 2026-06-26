@@ -37,6 +37,8 @@ class NormalizedTopicResponse(BaseModel):
     description: str
     order_index: int
     parent_temp_id: Optional[str] = None
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
 
 
 class AnalyzeMaterialStructureResponse(BaseModel):
