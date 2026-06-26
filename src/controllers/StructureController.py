@@ -181,7 +181,6 @@ class StructureController(BaseController):
         """
         Extracts Table of Contents from document.
         Scans first 25k chars for ToC headers in English and Arabic.
-        Falls back to detecting dense clusters of numbered headings.
         """
         scan = text[:self.TOC_SCAN_LIMIT]
         scan_lower = scan.lower()
@@ -204,38 +203,26 @@ class StructureController(BaseController):
             # Fallback: implicit ToC from dense numbered headings
             numbered = re.findall(r"^\s*\d+[\.\)]\s+[A-Zأ-ي][^\n]{3,80}$", scan, re.MULTILINE)
             if len(numbered) >= 5:
-                return "\n".join(numbered[:50])  # Cap at 50 entries
+                return "\n".join(numbered[:100])  # Cap at 100 entries
             return None
 
-        # Extract ToC block - look for where actual content begins
+        # Extract ToC block - grab where the header ends
         remaining = scan[toc_header_end:]
 
-        # Find end of ToC: either first substantial paragraph or 6000 chars
-        toc_block = remaining[:self.TOC_BLOCK_SIZE]
+        # Grab a larger chunk (15,000 chars) instead of using destructive regex.
+        # The 120B LLM is smart enough to stop parsing when it hits actual book paragraphs.
+        toc_block = remaining[:15000]
 
-        # Look for patterns that indicate end of ToC / start of content
-        content_start_patterns = [
-            r"\n\n+[A-Zأ-ي][a-zأ-ي\s]{20,100}\n",  # Paragraph start
-            r"\n(?:preface|introduction|chapter\s+1|الفصل\s+1)\s*",  # First chapter
-            r"\n\s*\d+\n",  # Page number alone
-        ]
-
-        for pattern in content_start_patterns:
-            end_match = re.search(pattern, toc_block, re.IGNORECASE)
-            if end_match:
-                toc_block = toc_block[:end_match.start()]
-                break
-
-        # Clean: remove page numbers, excessive whitespace
+        # Clean: remove excessive whitespace but keep the structure intact
         toc_lines = []
         for line in toc_block.split("\n"):
             line = line.strip()
-            # Remove trailing page numbers
+            # Remove trailing page numbers so the LLM doesn't get confused
             line = re.sub(r"\s+\d{1,4}$", "", line)
             if line and len(line) > 2:
                 toc_lines.append(line)
 
-        result = "\n".join(toc_lines[:100])  # Cap entries
+        result = "\n".join(toc_lines)
         return result if len(result) > 50 else None
 
     # =============================================================
