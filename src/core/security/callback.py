@@ -75,11 +75,34 @@ async def send_webhook_callback(
         signature=signature
     )
     
+    # ========================================================
+    # 🚀 [DEBUG] EXACT HTTP REQUEST BEING SENT TO BACKEND
+    # ========================================================
+    print("\n" + "="*80)
+    print("🚀 [DEBUG] OUTBOUND HTTP REQUEST DETAILS:")
+    print(f"URL:     {callback_url}")
+    print(f"METHOD:  POST")
+    print("HEADERS:")
+    for k, v in headers.items():
+        print(f"  {k}: {v}")
+    print("\nBODY (JSON):")
+    print(json.dumps(payload_dict, indent=2))
+    print("="*80 + "\n")
+    # ========================================================
+    
     # Send the Callback
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(callback_url, content=serialized_body, headers=headers)
+            
+            # Print the exact response we get back from the Learnova Backend!
+            print(f"🎯 [DEBUG] BACKEND RESPONSE STATUS: {response.status_code}")
+            print(f"🎯 [DEBUG] BACKEND RESPONSE TEXT: {response.text}")
+            
             response.raise_for_status()
             logger.info(f"Callback sent successfully for request {request_id}")
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Failed to send callback. Backend returned HTTP {e.response.status_code}")
+        logger.error(f"Backend Error Message: {e.response.text}")
     except Exception as e:
         logger.error(f"Failed to send callback to Learnova backend: {e}")

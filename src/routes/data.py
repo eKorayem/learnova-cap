@@ -335,13 +335,30 @@ async def _master_process_background(
                 chunk_size=settings.RAG_CHUNK_SIZE, overlap_size=settings.RAG_OVERLAP_SIZE
             )
             if rag_chunks:
-                file_rag_records = [
-                    DataChunk(
-                        chunk_text=c.page_content, chunk_metadata=c.metadata, chunk_order=i+1,
-                        project_id=project.project_id, chunk_project_id=project.id,
-                        chunk_asset_id=asset_id, chunk_type="rag"
-                    ) for i, c in enumerate(rag_chunks)
-                ]
+                file_rag_records = []
+                for i, c in enumerate(rag_chunks):
+                    clean_text = c.page_content.strip()
+                    
+                    # ==========================================
+                    # RAG QUALITY FILTER (Ignore PDF Garbage)
+                    # ==========================================
+                    # 1. Skip chunks that are too short to have semantic meaning
+                    if len(clean_text) < 50:
+                        continue
+                        
+                    # 2. Skip chunks that are just dots/punctuation (e.g., ".......")
+                    if clean_text.replace(".", "").replace("-", "").strip() == "":
+                        continue
+                    # ==========================================
+
+                    file_rag_records.append(
+                        DataChunk(
+                            chunk_text=clean_text, chunk_metadata=c.metadata, chunk_order=i+1,
+                            project_id=project.project_id, chunk_project_id=project.id,
+                            chunk_asset_id=asset_id, chunk_type="rag"
+                        )
+                    )
+                
                 rag_records.extend(file_rag_records)
                 all_chunk_records.extend(file_rag_records)
 
