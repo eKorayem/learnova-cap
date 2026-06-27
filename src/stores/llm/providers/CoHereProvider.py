@@ -97,25 +97,25 @@ class CoHereProvider(LLMInterface):
 
         return response.embeddings[0]
     
-    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict):
+    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict, temperature: float = None):
         if not self.client or not self.generation_model_id:
             self.logger.error("CoHereProvider: client or model not initialized")
             return None
 
         import json
-        # Cohere requires aggressive prompting to ensure clean JSON output
         schema_instruction = f"\n\nYou MUST return ONLY valid JSON matching this schema. Do not include markdown formatting or explanations.\n{json.dumps(response_schema)}"
         
         combined_prompt = f"System Rules: {system_prompt}\n\nUser Request: {user_prompt}{schema_instruction}"
 
+        temp = temperature if temperature is not None else self.default_generation_temperature # <-- ADDED
+
         try:
-            # Running Cohere's sync client in an async wrapper
             import asyncio
             response = await asyncio.to_thread(
                 self.client.chat,
                 model=self.generation_model_id,
                 message=combined_prompt,
-                temperature=self.default_generation_temperature,
+                temperature=temp, # <-- UPDATED
                 max_tokens=self.defualt_generation_max_out_tokens
             )
 
@@ -123,7 +123,6 @@ class CoHereProvider(LLMInterface):
                 self.logger.error("CoHereProvider: empty response")
                 return None
 
-            # Clean the text just in case Cohere adds markdown
             cleaned_text = response.text.strip()
             if cleaned_text.startswith("```json"):
                 cleaned_text = cleaned_text[7:].strip()

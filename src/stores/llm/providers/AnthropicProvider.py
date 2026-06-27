@@ -93,17 +93,18 @@ class AnthropicProvider(LLMInterface):
     def embed_text(self, text: str, document_type: str = None):
         raise NotImplementedError("AnthropicProvider does not support embeddings.")
 
-    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict):
+    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict, temperature: float = None):
         if not self.client or not self.generation_model_id:
             self.logger.error("AnthropicProvider: client or model not initialized")
             return None
 
-        # Anthropic Claude 3 is excellent at strict JSON when using aggressive prompting
         schema_instruction = f"\n\nYou MUST return ONLY valid JSON matching this exact schema. Do not include markdown formatting, preambles, or explanations.\n{json.dumps(response_schema)}"
         
         messages = [
             {"role": "user", "content": user_prompt + schema_instruction}
         ]
+
+        temp = temperature if temperature is not None else self.default_generation_temperature # <-- ADDED
 
         try:
             response = self.client.messages.create(
@@ -111,7 +112,7 @@ class AnthropicProvider(LLMInterface):
                 system=system_prompt,
                 messages=messages,
                 max_tokens=self.defualt_generation_max_out_tokens,
-                temperature=self.default_generation_temperature
+                temperature=temp # <-- UPDATED
             )
             
             result = response.content[0].text

@@ -129,7 +129,7 @@ class GroqProvider(LLMInterface):
             "content" : self.process_text(prompt)
         }
     
-    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict):
+    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict, temperature: float = None):
         if not self.client or not self.generation_model_id:
             self.logger.error("GroqProvider: client or model not initialized")
             return None
@@ -142,12 +142,14 @@ class GroqProvider(LLMInterface):
             {"role": "user", "content": user_prompt}
         ]
 
+        temp = temperature if temperature is not None else self.default_generation_temperature # <-- ADDED
+
         try:
             response = self.client.chat.completions.create(
                 model=self.generation_model_id,
                 messages=messages,
                 max_tokens=self.defualt_generation_max_out_tokens,
-                temperature=self.default_generation_temperature,
+                temperature=temp, # <-- UPDATED
                 response_format={"type": "json_object"}
             )
             return response.choices[0].message.content

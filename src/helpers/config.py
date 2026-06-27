@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, List
 
@@ -30,8 +31,15 @@ class Settings(BaseSettings):
 
     INPUT_DAFAULT_MAX_CHARACTERS: Optional[int] = None
     GENERATION_DAFAULT_MAX_TOKENS: Optional[int] = None
-    GENERATION_DAFAULT_TEMPERATURE: Optional[float] = None
+    
+    # Add these new fields:
+    STRUCTURE_TEMPERATURE: float = Field(default=0.1, env="STRUCTURE_TEMPERATURE")
+    EXTRACTION_TEMPERATURE: float = Field(default=0.1, env="EXTRACTION_TEMPERATURE")
+    QUESTION_TEMPERATURE: float = Field(default=0.3, env="QUESTION_TEMPERATURE")
+    RAG_CHAT_TEMPERATURE: float = Field(default=0.6, env="RAG_CHAT_TEMPERATURE")
+    GENERATION_DAFAULT_TEMPERATURE: float = Field(default=0.1, env="GENERATION_DAFAULT_TEMPERATURE")
 
+    
     JINA_API_KEY: Optional[str] = None
     JINA_API_URL: str = "https://api.jina.ai/v1"
 

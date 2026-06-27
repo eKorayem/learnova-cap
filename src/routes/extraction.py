@@ -63,16 +63,7 @@ async def _extract_questions_background(app, project, payload: ExtractionWebhook
         if not result or "extracted_questions" not in result:
             raise ValueError("LLM failed to return a valid extraction schema.")
         
-        # ==========================================
-        # PYTHON SAFETY NET: Fix null expected_answers
-        # ==========================================
-        for q in result["extracted_questions"]:
-            if q.get("type") == "short_answer" and not q.get("expected_answer"):
-                q["expected_answer"] = "Please refer to the grading rubric for criteria."
-            if not q.get("expected_answer"):
-                q["expected_answer"] = "N/A"
-        # ==========================================
-
+    
         # ==========================================
         # PYTHON SAFETY NET: Fix nulls
         # ==========================================
@@ -87,7 +78,7 @@ async def _extract_questions_background(app, project, payload: ExtractionWebhook
             if not q.get("difficulty"):
                 q["difficulty"] = "medium"
         # ==========================================
-        
+
         # 3. Send Success Callback
         await send_webhook_callback(
             request_id=payload.request_id,

@@ -199,6 +199,7 @@ class NLPController(BaseController):
             answer = await self.generation_client.generate_text_async(
                 prompt=full_prompt,
                 chat_history=formatted_history,
+                temperature=self.app_settings.RAG_CHAT_TEMPERATURE,
             )
         else:
             # Fallback to sync (runs in thread pool)
@@ -207,6 +208,7 @@ class NLPController(BaseController):
                 self.generation_client.generate_text,
                 prompt=full_prompt,
                 chat_history=formatted_history,
+                temperature=self.app_settings.RAG_CHAT_TEMPERATURE, 
             )
 
         return answer, full_prompt, formatted_history, retrieved_documents

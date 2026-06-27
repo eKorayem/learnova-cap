@@ -203,7 +203,7 @@ class QuestionGenerationController(BaseController):
             response = self.generation_client.generate_text(
                 prompt=prompt,
                 chat_history=[],
-                temperature=0.7,
+                temperature=self.app_settings.QUESTION_TEMPERATURE,
                 max_output_tokens=self.app_settings.GENERATION_DAFAULT_MAX_TOKENS
             )
 

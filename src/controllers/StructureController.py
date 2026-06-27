@@ -118,7 +118,7 @@ class StructureController(BaseController):
             llm_start_time = time.time()
             response = self.generation_client.generate_text(
                 prompt=prompt,
-                temperature=0.1,
+                temperature=self.app_settings.STRUCTURE_TEMPERATURE,
                 max_output_tokens=self.app_settings.GENERATION_DAFAULT_MAX_TOKENS or 4096
             )
             llm_execution_time = time.time() - llm_start_time
