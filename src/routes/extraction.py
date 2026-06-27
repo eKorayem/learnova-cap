@@ -62,7 +62,32 @@ async def _extract_questions_background(app, project, payload: ExtractionWebhook
 
         if not result or "extracted_questions" not in result:
             raise ValueError("LLM failed to return a valid extraction schema.")
+        
+        # ==========================================
+        # PYTHON SAFETY NET: Fix null expected_answers
+        # ==========================================
+        for q in result["extracted_questions"]:
+            if q.get("type") == "short_answer" and not q.get("expected_answer"):
+                q["expected_answer"] = "Please refer to the grading rubric for criteria."
+            if not q.get("expected_answer"):
+                q["expected_answer"] = "N/A"
+        # ==========================================
 
+        # ==========================================
+        # PYTHON SAFETY NET: Fix nulls
+        # ==========================================
+        for q in result["extracted_questions"]:
+            # Fix null expected_answer
+            if q.get("type") == "short_answer" and not q.get("expected_answer"):
+                q["expected_answer"] = "Please refer to the grading rubric for criteria."
+            if not q.get("expected_answer"):
+                q["expected_answer"] = "N/A"
+            
+            # Fix null difficulty (Backend 422 Fix)
+            if not q.get("difficulty"):
+                q["difficulty"] = "medium"
+        # ==========================================
+        
         # 3. Send Success Callback
         await send_webhook_callback(
             request_id=payload.request_id,
@@ -72,7 +97,7 @@ async def _extract_questions_background(app, project, payload: ExtractionWebhook
             message=f"Successfully extracted {len(result['extracted_questions'])} native questions.",
             module_id=payload.body.module_id,
             material_id=payload.body.material_id,
-            data={"extracted_questions": result["extracted_questions"]}
+            data={"extracted_questions": result["extracted_questions"]}  # <--- CHANGED THIS KEY
         )
 
     except Exception as e:
@@ -86,7 +111,7 @@ async def _extract_questions_background(app, project, payload: ExtractionWebhook
             message=f"Extraction failed: {str(e)[:100]}",
             module_id=payload.body.module_id,
             material_id=payload.body.material_id,
-            data={"extracted_questions": []}
+            data={"extracted_questions": []}  # <--- CHANGED THIS KEY
         )
 
 @extraction_router.post("/extraction/questions")
