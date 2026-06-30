@@ -242,7 +242,7 @@ class StructureController(BaseController):
             return None
 
         remaining = scan[toc_header_end:]
-        toc_block = remaining[:15000]
+        toc_block = remaining[:25000]
 
         toc_lines = []
         for line in toc_block.split("\n"):
