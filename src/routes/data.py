@@ -94,7 +94,8 @@ async def _download_and_process_background(
         course_id=payload.course_id,
         operation_type=payload.operation_type,
         module_id=payload.body.module_id,
-        material_id=payload.body.material_id
+        material_id=payload.body.material_id,
+        destination=getattr(payload.body, "destination", None)
     )
 
 
@@ -280,7 +281,8 @@ async def process_endpoint(request: Request, project_id: str, process_request: P
 async def _master_process_background(
     app, project, project_files_ids: dict, do_reset: int,
     request_id: str = None, course_id: int = None, operation_type: str = None,
-    module_id: int = None, material_id: int = None
+    module_id: int = None, material_id: int = None,
+    destination: str = None
 ):
     logger.info(f"Starting background processing for project: {project.project_id}")
     try:
@@ -342,14 +344,14 @@ async def _master_process_background(
                     # ==========================================
                     # RAG QUALITY FILTER (Ignore PDF Garbage)
                     # ==========================================
-                    # 1. Skip chunks that are too short to have semantic meaning
+
                     if len(clean_text) < 50:
                         continue
                         
                     # 2. Skip chunks that are just dots/punctuation (e.g., ".......")
                     if clean_text.replace(".", "").replace("-", "").strip() == "":
                         continue
-                    # ==========================================
+
 
                     file_rag_records.append(
                         DataChunk(
@@ -400,7 +402,8 @@ async def _master_process_background(
             "topics": normalized_topics if analysis_status == "completed" else [],
             "learning_outcomes": [],                   
             "topic_learning_outcome_relations": [],
-            "questions": []  # FIX APPLIED HERE
+            "questions": [],
+            "destination": destination
         }
 
         if request_id and course_id and operation_type:

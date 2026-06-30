@@ -36,3 +36,4 @@ class ExtractionWebhookPayload(BaseModel):
     operation_type: str
     course_id: int
     body: ExtractionRequestBody
+    destination: Optional[str] = None
