@@ -67,14 +67,30 @@ You must return ONLY valid JSON matching this schema exactly:
 
         user_prompt = f"DOCUMENT TEXT:\n\n{document_text}"
 
+        # Define the EXACT schema to prevent the '{}' hallucination bug
+        expected_schema = {
+            "extracted_questions": [
+                {
+                    "topic_id": 0,
+                    "question_text": "string",
+                    "type": "string",
+                    "difficulty": "string",
+                    "options": [{"id": "string", "text": "string"}],
+                    "expected_answer": "string",
+                    "explanation": "string",
+                    "grading_rubric": {"key_points": ["string"]}
+                }
+            ]
+        }
+
         try:
             settings = get_settings()
-            # Enforce strict JSON output using the massive context model
+            
             response = await self.generation_client.generate_structured_response(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                response_schema={}, # OpenRouter/Groq handles the schema directly from the prompt instructions
-                temperature=settings.EXTRACTION_TEMPERATURE # <--- Use settings.
+                response_schema=expected_schema, # <--- FIXED
+                temperature=settings.EXTRACTION_TEMPERATURE
             )
 
             if not response:
