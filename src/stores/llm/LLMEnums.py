@@ -9,6 +9,7 @@ class LLMEnums(Enum):
     JINA = "JINA"  
     DEEPSEEK = "DEEPSEEK"  # <--- ADD THIS
     ANTHROPIC = "ANTHROPIC"
+    NARAYA = "NARAYA"
 
 class OpenAIEnums(Enum):
     SYSTEM = "system"

@@ -1,5 +1,5 @@
 from .LLMEnums import LLMEnums
-from .providers import OpenAIProvider, CoHereProvider, GroqProvider, SentenceTransformerProvider, OpenRouterProvider, JinaProvider, DeepSeekProvider
+from .providers import OpenAIProvider, CoHereProvider, GroqProvider, SentenceTransformerProvider, OpenRouterProvider, JinaProvider, DeepSeekProvider, NarayaProvider
 
 
 class LLMProviderFactory:
@@ -69,6 +69,14 @@ class LLMProviderFactory:
                 aws_access_key=self.config.AWS_ACCESS_KEY_ID,
                 aws_secret_key=self.config.AWS_SECRET_ACCESS_KEY,
                 aws_region=self.config.AWS_REGION_NAME,
+                defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
+                defualt_generation_max_out_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
+                default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE
+            )
+        
+        elif provider == LLMEnums.NARAYA.value:
+            return NarayaProvider(
+                api_key=self.config.NARAYA_API_KEY,
                 defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
                 defualt_generation_max_out_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
                 default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE
