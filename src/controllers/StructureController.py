@@ -5,7 +5,7 @@ import json
 import re
 import logging
 import time
-
+# updated Structure C
 class StructureController(BaseController):
     """
     Universal Parser for academic document structure extraction.
