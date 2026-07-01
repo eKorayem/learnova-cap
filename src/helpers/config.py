@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # or lower it if you switch STRUCTURE_BACKEND to a small-context model.
     STRUCTURE_MAX_INPUT_CHARS_PER_BATCH: int = 60000
     STRUCTURE_MAX_BATCHES: int = 12
-    STRUCTURE_BATCH_SLEEP_SECONDS: float = 2
+    STRUCTURE_BATCH_SLEEP_SECONDS: float = 0
 
     # ======================= Question Generation Config =======================
     # Gemini 2.5 Flash: better instruction-following/reasoning than Lite,

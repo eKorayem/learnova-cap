@@ -152,7 +152,7 @@ async def _extract_questions_background(app, project, payload: ExtractionWebhook
             
             if idx < len(batches) - 1:
                 logger.info("Sleeping 15s to reset Groq's TPM Token Window...")
-                await asyncio.sleep(15)
+                await asyncio.sleep(2)
 
         # ==========================================
         # THE STRICT SANITIZER
