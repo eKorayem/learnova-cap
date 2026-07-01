@@ -60,22 +60,37 @@ class Settings(BaseSettings):
     STRUCTURE_OVERLAP_SIZE: int = 100
 
     # ======================= Structure Analysis Config =======================
-
+    # Switched off the ":free" OpenRouter tier. Free-tier models are shared,
+    # rate-limited, get renamed/deprecated without notice, and are less
+    # reliable at strict JSON-schema compliance — all of which contributed
+    # to the "sometimes works, sometimes doesn't" extraction problem.
+    # Gemini 2.5 Flash-Lite has a 1M-token context window, so the full
+    # reduced document text fits in one (or very few) batched calls.
     STRUCTURE_BACKEND: str = "OPENROUTER"
-    STRUCTURE_MODEL_ID: str = "google/gemini-2.0-flash-exp:free"
+    STRUCTURE_MODEL_ID: str = "google/gemini-2.5-flash-lite"
+
+    # Per-batch input budget for StructureController (see _split_into_batches).
+    # 60,000 chars comfortably fits Flash-Lite's context with room for the
+    # prompt/schema; raise this further since the model supports ~1M tokens,
+    # or lower it if you switch STRUCTURE_BACKEND to a small-context model.
+    STRUCTURE_MAX_INPUT_CHARS_PER_BATCH: int = 60000
+    STRUCTURE_MAX_BATCHES: int = 12
+    STRUCTURE_BATCH_SLEEP_SECONDS: float = 2
 
     # ======================= Question Generation Config =======================
-
+    # Gemini 2.5 Flash: better instruction-following/reasoning than Lite,
+    # still cheap, needed for generating plausible distractors/questions.
     QUESTION_GENERATION_BACKEND: str = "OPENROUTER"
-    QUESTION_GENERATION_MODEL_ID: str = "qwen/qwen-2.5-72b-instruct:free"
+    QUESTION_GENERATION_MODEL_ID: str = "google/gemini-2.5-flash"
     QUESTION_OPENAI_API_KEY: Optional[str] = None    # OpenRouter API key
     QUESTION_CHUNK_SIZE: int = 1500       
     QUESTION_OVERLAP_SIZE: int = 150      
 
     # ======================= Exam Grading Config =======================
-
+    # Grading is low-volume (once per submission) and benefits most from
+    # reasoning quality, so it's worth spending a little more here.
     GRADING_BACKEND: str = "OPENROUTER"
-    GRADING_MODEL_ID: str = "meta-llama/llama-3.3-70b-instruct:free"
+    GRADING_MODEL_ID: str = "google/gemini-2.5-flash"
 
     # ======================= VectorDB CONFIG =======================
 

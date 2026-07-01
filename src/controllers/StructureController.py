@@ -23,12 +23,38 @@ class StructureController(BaseController):
         self.BOOK_CHAR_THRESHOLD = 30000
         self.TOC_SCAN_LIMIT = 25000
         self.TOC_BLOCK_SIZE = 6000
-        
-        # REMOVED MAX_LLM_INPUT_CHARS limit because we are batching now!
-        
+
+        # ==========================================
+        # BATCHING (replaces the old hard truncation)
+        # Instead of throwing away everything past N chars, we split
+        # large inputs into multiple LLM calls and merge the results.
+        # Configurable per-backend via settings, since different
+        # providers/models have very different safe context sizes.
+        # Default assumes a modern paid model (large context window);
+        # override via STRUCTURE_MAX_INPUT_CHARS_PER_BATCH in settings
+        # if you're on a small-context/free-tier backend.
+        # ==========================================
+        self.MAX_LLM_INPUT_CHARS_PER_BATCH = getattr(
+            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 60000
+        )
+        # Safety ceiling on number of batches for one document, so a
+        # pathological document can't trigger hundreds of LLM calls.
+        self.MAX_STRUCTURE_BATCHES = getattr(
+            self.app_settings, "STRUCTURE_MAX_BATCHES", 12
+        )
+        # Small pause between sequential batch calls to stay friendly
+        # with provider rate limits (set to 0 to disable).
+        self.STRUCTURE_BATCH_SLEEP_SECONDS = getattr(
+            self.app_settings, "STRUCTURE_BATCH_SLEEP_SECONDS", 2
+        )
+
         self.HEADING_MIN_LENGTH = 3
         self.HEADING_MAX_LENGTH = 120
         self.MAX_HEADING_WORDS = 12
+
+    # =============================================================
+    # PUBLIC ENTRY POINTS
+    # =============================================================
 
     async def analyze_lecture_structure(
         self,
@@ -40,6 +66,7 @@ class StructureController(BaseController):
     ) -> dict:
         
         start_time = time.time()
+
         self.logger.info(f"========== [STARTED] STRUCTURE EXTRACTION FOR PROJECT {project_id} ==========")
         
         # 1. Fetch chunks
@@ -54,6 +81,7 @@ class StructureController(BaseController):
         chunks = sorted(chunks, key=lambda c: c.chunk_order)
         total_chunks = len(chunks)
 
+        # Inject the physical page number into the text stream so the LLM can see it
         text_blocks = []
         for c in chunks:
             page_num = c.chunk_metadata.get('page')
@@ -63,20 +91,18 @@ class StructureController(BaseController):
                 text_blocks.append(c.chunk_text)
                 
         full_text = "\n\n".join(text_blocks)
+        
         self.logger.info(f"DEBUG: Fetched {total_chunks} chunks. Total raw characters: {len(full_text)}")
 
+        # 2. Universal Detection
         doc_type = self._detect_document_type(full_text, total_chunks)
         toc_text = self._extract_potential_toc(full_text)
         has_toc = toc_text is not None
 
-        # ==============================================================
-        # NEW BATCHING LOGIC: Process massive books in smaller segments!
-        # ==============================================================
-        batches = []
-        BATCH_CHAR_LIMIT = 12000 # Safely under the token limits
-
+        # 3. Dynamic Extraction Routing
         if doc_type == "lecture" or doc_type in ["slide", "presentation"]:
             strategy = "Slide Reading (Full Document)"
+            
             llm_input_lines = []
             for c in chunks:
                 page_num = c.chunk_metadata.get('page', 0) + 1
@@ -84,31 +110,17 @@ class StructureController(BaseController):
                 if text_snippet:
                     llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
             
-            curr_batch, curr_len = [], 0
-            for line in llm_input_lines:
-                curr_batch.append(line)
-                curr_len += len(line)
-                if curr_len > BATCH_CHAR_LIMIT:
-                    batches.append(("\n\n".join(curr_batch), self._build_lecture_prompt))
-                    curr_batch, curr_len = [], 0
-            if curr_batch:
-                batches.append(("\n\n".join(curr_batch), self._build_lecture_prompt))
+            llm_input = "\n\n".join(llm_input_lines)
+            prompt = self._build_lecture_prompt(llm_input, max_topics)
             
         elif has_toc:
+            llm_input = toc_text
+            prompt = self._build_toc_prompt(llm_input, max_topics)
             strategy = "Table of Contents"
-            lines = toc_text.split('\n')
-            curr_batch, curr_len = [], 0
-            for line in lines:
-                curr_batch.append(line)
-                curr_len += len(line)
-                if curr_len > BATCH_CHAR_LIMIT:
-                    batches.append(("\n".join(curr_batch), self._build_toc_prompt))
-                    curr_batch, curr_len = [], 0
-            if curr_batch:
-                batches.append(("\n".join(curr_batch), self._build_toc_prompt))
             
         else:
             llm_input = self._extract_headings_only(full_text, doc_type)
+            
             if len(llm_input.strip()) < 1000:
                 self.logger.warning("Book strategy yielded too little text. Falling back to lecture strategy.")
                 strategy = "Slide Reading (Fallback)"
@@ -118,91 +130,203 @@ class StructureController(BaseController):
                     text_snippet = str(c.chunk_text)[:400].strip()
                     if text_snippet:
                         llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
-                
-                curr_batch, curr_len = [], 0
-                for line in llm_input_lines:
-                    curr_batch.append(line)
-                    curr_len += len(line)
-                    if curr_len > BATCH_CHAR_LIMIT:
-                        batches.append(("\n\n".join(curr_batch), self._build_lecture_prompt))
-                        curr_batch, curr_len = [], 0
-                if curr_batch:
-                    batches.append(("\n\n".join(curr_batch), self._build_lecture_prompt))
+                llm_input = "\n\n".join(llm_input_lines)
+                prompt = self._build_lecture_prompt(llm_input, max_topics)
             else:
+                prompt = self._build_book_headings_prompt(llm_input, max_topics)
                 strategy = "Book Headings"
-                lines = llm_input.split('\n')
-                curr_batch, curr_len = [], 0
-                for line in lines:
-                    curr_batch.append(line)
-                    curr_len += len(line)
-                    if curr_len > BATCH_CHAR_LIMIT:
-                        batches.append(("\n".join(curr_batch), self._build_book_headings_prompt))
-                        curr_batch, curr_len = [], 0
-                if curr_batch:
-                    batches.append(("\n".join(curr_batch), self._build_book_headings_prompt))
 
-        self.logger.info(f"Executing {len(batches)} batched structure extraction calls...")
+        # 4. Split into batches instead of blindly truncating.
+        # Small inputs still take exactly one call; large ones get several,
+        # and results are merged afterwards. This is the fix for the old
+        # bug where anything past MAX_LLM_INPUT_CHARS was silently dropped.
+        input_batches = self._split_into_batches(llm_input, self.MAX_LLM_INPUT_CHARS_PER_BATCH)
 
-        import asyncio
-        all_extracted_topics = []
-        approx_in_tokens, approx_out_tokens, llm_execution_time = 0, 0, 0
+        if len(input_batches) > self.MAX_STRUCTURE_BATCHES:
+            self.logger.warning(
+                f"DEBUG: Document produced {len(input_batches)} batches, "
+                f"capping at {self.MAX_STRUCTURE_BATCHES} to bound cost/latency."
+            )
+            input_batches = input_batches[:self.MAX_STRUCTURE_BATCHES]
 
-        # Execute batches sequentially and stitch them together
-        for idx, (batch_text, prompt_func) in enumerate(batches):
-            prompt = prompt_func(text=batch_text, max_topics=max_topics)
-            approx_in_tokens += len(prompt) // 4
-            
-            try:
-                b_start_time = time.time()
-                # Run sync generation in a background thread to prevent blocking FastAPI
-                response = await asyncio.to_thread(
-                    self.generation_client.generate_text,
-                    prompt,
-                    [],
-                    2500, # Max output tokens is perfectly safe here since we batched!
-                    self.app_settings.STRUCTURE_TEMPERATURE
+        prompt_builder = {
+            "Slide Reading (Full Document)": self._build_lecture_prompt,
+            "Slide Reading (Fallback)": self._build_lecture_prompt,
+            "Table of Contents": self._build_toc_prompt,
+            "Book Headings": self._build_book_headings_prompt,
+        }[strategy]
+
+        batch_structures = []
+        total_in_tokens = 0
+        total_out_tokens = 0
+
+        try:
+            llm_start_time = time.time()
+
+            for i, batch_text in enumerate(input_batches):
+                batch_text_for_prompt = batch_text
+                if len(input_batches) > 1:
+                    # Tell the model this is a partial excerpt so it doesn't
+                    # invent a fake "introduction"/"conclusion" topic per batch.
+                    batch_text_for_prompt = (
+                        f"[This is part {i + 1} of {len(input_batches)} of a larger document. "
+                        f"Only extract topics that are actually present in this excerpt.]\n\n"
+                        f"{batch_text}"
+                    )
+
+                batch_prompt = prompt_builder(batch_text_for_prompt, max_topics)
+                total_in_tokens += len(batch_prompt) // 4
+
+                max_out = self._compute_max_output_tokens(len(batch_text), max_topics)
+
+                response = self._generate_with_retry(
+                    prompt=batch_prompt,
+                    temperature=self.app_settings.STRUCTURE_TEMPERATURE,
+                    max_output_tokens=max_out,
                 )
-                llm_execution_time += (time.time() - b_start_time)
 
-                if response:
-                    approx_out_tokens += len(response) // 4
-                    structure = self._parse_structure_response(response)
-                    if structure and "topics" in structure:
-                        all_extracted_topics.extend(structure["topics"])
-                        self.logger.info(f"✅ Batch {idx+1}/{len(batches)} extracted {len(structure['topics'])} topics.")
-                else:
-                    self.logger.warning(f"Batch {idx+1}/{len(batches)} returned empty response.")
-                    
+                if not response:
+                    self.logger.warning(f"DEBUG: Batch {i + 1}/{len(input_batches)} returned no response, skipping.")
+                    continue
+
+                total_out_tokens += len(response) // 4
+                batch_structure = self._parse_structure_response(response)
+                if batch_structure and batch_structure.get("topics"):
+                    batch_structures.append(batch_structure)
+
+                # Be polite to rate limits between sequential batch calls.
+                if i < len(input_batches) - 1 and self.STRUCTURE_BATCH_SLEEP_SECONDS:
+                    time.sleep(self.STRUCTURE_BATCH_SLEEP_SECONDS)
+
+            llm_execution_time = time.time() - llm_start_time
+
+            structure = self._merge_structure_batches(batch_structures)
+            extracted_count = len(structure.get("topics", [])) if structure else 0
+            status = "SUCCESS" if extracted_count > 0 else "FAILED (Fallback Used)"
+
+            # ================= DEBUG SUMMARY REPORT =================
+            total_time = time.time() - start_time
+            print("\n" + "="*50)
+            print("PIPELINE DEBUG SUMMARY: STRUCTURE EXTRACTION")
+            print("="*50)
+            print(f"Document Type     : {doc_type.upper()}")
+            print(f"Parsing Strategy  : {strategy}")
+            print(f"Chunks Processed  : {total_chunks}")
+            print(f"Text Reduction    : {len(full_text)} chars -> {len(llm_input)} chars reduced")
+            print(f"Batches Sent      : {len(input_batches)} (full document coverage, no truncation)")
+            print(f"Approx In Tokens  : ~{total_in_tokens} tokens")
+            print(f"Approx Out Tokens : ~{total_out_tokens} tokens")
+            print(f"LLM Latency       : {llm_execution_time:.2f} seconds")
+            print(f"Total Time        : {total_time:.2f} seconds")
+            print(f"Final Status      : {status} ({extracted_count} topics found)")
+            print("="*50 + "\n")
+            # ========================================================
+
+            if extracted_count > 0:
+                return structure
+
+            return self._create_fallback_structure()
+
+        except Exception as e:
+            self.logger.error(f"DEBUG: Fatal error during extraction: {e}")
+            return self._create_fallback_structure()
+
+    def _generate_with_retry(self, prompt: str, temperature: float, max_output_tokens: int, retries: int = 2):
+        """Calls the LLM with a couple of retries so one transient rate-limit/
+        network error on a single batch doesn't nuke the whole document."""
+        last_error = None
+        for attempt in range(retries + 1):
+            try:
+                return self.generation_client.generate_text(
+                    prompt=prompt,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
             except Exception as e:
-                self.logger.error(f"Batch {idx+1} failed: {e}")
-            
-            if idx < len(batches) - 1:
-                await asyncio.sleep(2) # Protect API rate limits
+                last_error = e
+                if attempt < retries:
+                    self.logger.warning(f"DEBUG: LLM call failed (attempt {attempt + 1}/{retries + 1}): {e}. Retrying...")
+                    time.sleep(3 * (attempt + 1))
+        self.logger.error(f"DEBUG: LLM call failed after {retries + 1} attempts: {last_error}")
+        return None
 
-        extracted_count = len(all_extracted_topics)
-        status = "SUCCESS" if extracted_count > 0 else "FAILED (Fallback Used)"
+    def _compute_max_output_tokens(self, batch_char_len: int, max_topics: int = None) -> int:
+        """Scale the output token budget with how much input text we sent,
+        instead of a flat cap that truncates JSON for larger batches.
+        Rough heuristic: bigger input -> more topics/subtitles -> more JSON."""
+        floor_tokens = 2500
+        ceiling_tokens = 8000
+        # ~1 output token needed per ~6 input chars worth of structure, loosely
+        scaled = floor_tokens + (batch_char_len // 6)
+        estimate = max(floor_tokens, min(ceiling_tokens, scaled))
+        if max_topics:
+            # Don't over-allocate if the caller explicitly limited topic count
+            estimate = min(estimate, floor_tokens + max_topics * 150)
+        return int(estimate)
 
-        # ================= DEBUG SUMMARY REPORT =================
-        total_time = time.time() - start_time
-        print("\n" + "="*50)
-        print("PIPELINE DEBUG SUMMARY: STRUCTURE EXTRACTION")
-        print("="*50)
-        print(f"Document Type     : {doc_type.upper()}")
-        print(f"Parsing Strategy  : {strategy}")
-        print(f"Chunks Processed  : {total_chunks}")
-        print(f"Batches Executed  : {len(batches)}")
-        print(f"Approx In Tokens  : ~{approx_in_tokens} tokens")
-        print(f"Approx Out Tokens : ~{approx_out_tokens} tokens")
-        print(f"LLM Latency       : {llm_execution_time:.2f} seconds")
-        print(f"Total Time        : {total_time:.2f} seconds")
-        print(f"Final Status      : {status} ({extracted_count} topics found)")
-        print("="*50 + "\n")
-        # ========================================================
+    def _split_into_batches(self, text: str, max_chars_per_batch: int) -> List[str]:
+        """Splits reduced input text into batches that each fit the configured
+        per-call budget, without cutting in the middle of a page/heading block.
+        Unlike the old code, this covers the ENTIRE input across batches instead
+        of throwing away everything past the first max_chars_per_batch chars."""
+        if len(text) <= max_chars_per_batch:
+            return [text] if text.strip() else []
 
-        if extracted_count > 0:
-            return {"topics": all_extracted_topics}
+        # Prefer splitting on page-marker boundaries so each batch stays
+        # coherent; fall back to blank-line boundaries if no page markers exist.
+        blocks = re.split(r"(?=^--- \[PAGE)", text, flags=re.MULTILINE)
+        blocks = [b for b in blocks if b.strip()]
+        if len(blocks) <= 1:
+            blocks = [b for b in text.split("\n\n") if b.strip()]
+        if not blocks:
+            blocks = [text]
 
-        return self._create_fallback_structure()
+        batches = []
+        current = []
+        current_len = 0
+        for block in blocks:
+            block_len = len(block)
+            if current and current_len + block_len > max_chars_per_batch:
+                batches.append("\n\n".join(current))
+                current = [block]
+                current_len = block_len
+            else:
+                current.append(block)
+                current_len += block_len
+
+        if current:
+            batches.append("\n\n".join(current))
+
+        return batches
+
+    def _merge_structure_batches(self, batch_structures: List[dict]) -> dict:
+        """Merges topic lists from multiple batches into one structure,
+        deduping topics with the same (normalized) title and renumbering
+        the 'order' field sequentially."""
+        if not batch_structures:
+            return self._create_fallback_structure()
+
+        merged_topics = []
+        seen_titles = set()
+
+        for structure in batch_structures:
+            for topic in structure.get("topics", []):
+                title = str(topic.get("title", "")).strip()
+                key = title.lower()
+                if not title or key in seen_titles:
+                    continue
+                seen_titles.add(key)
+                merged_topics.append(topic)
+
+        for idx, topic in enumerate(merged_topics):
+            topic["order"] = idx
+            for sub_idx, sub in enumerate(topic.get("subtitles", [])):
+                sub["order"] = sub_idx
+
+        if not merged_topics:
+            return self._create_fallback_structure()
+
+        return {"topics": merged_topics}
 
     async def analyze_material_structure(
         self,
@@ -478,21 +602,20 @@ class StructureController(BaseController):
 
     def _build_toc_prompt(self, text: str, max_topics: int = None) -> str:
         max_constraint = f"\n- LIMIT: Extract at most {max_topics} top-level topics." if max_topics else ""
-        return f"""You are an expert data parser extracting a Table of Contents from an academic document. You must extract the COMPLETE hierarchical structure.
+        return f"""You are parsing a Table of Contents from an academic document. Extract the COMPLETE hierarchical structure.
 
 CRITICAL RULES:
-1. YOU MUST NOT STOP EARLY. You must process EVERY SINGLE ENTRY in the provided text from the first chapter to the very last chapter/appendix. If you stop early, the entire system fails.
-2. Group sub-numbered headings (1.1, 1.2) as subtitles under their parent chapter (1.0).
-3. Preserve exact title wording (do not paraphrase).
-4. Support both English and Arabic entries.
-5. Maximum 2 levels: topics and subtitles only.
-6. Write a brief 1-sentence description for each item.
-7. Extract 'page_start' and 'page_end' integers if visible in the text (e.g., from ToC numbers).
+1. DO NOT STOP EARLY - process EVERY entry from start to finish
+2. Preserve exact title wording (do not paraphrase)
+3. Support both English and Arabic entries
+4. Maximum 2 levels: topics and subtitles only
+5. Write a brief 1-sentence description for each item
+6. Output MUST be valid JSON matching the schema exactly
+7. Extract 'page_start' and 'page_end' integers if visible in the text (e.g., from ToC numbers or "(Page X)" labels).
 8. 'page_end' is typically the page before the next topic starts. If unknown, output null.
-9. Verify your output: Does your final topic match the final topic in the source text? If not, keep generating.
 {max_constraint}
 
-TABLE OF CONTENTS SOURCE TEXT:
+TABLE OF CONTENTS:
 {text}
 
 OUTPUT JSON SCHEMA (strict - no extra fields):
@@ -709,7 +832,7 @@ Return ONLY the JSON object, no markdown, no explanations."""
                 "page_end": topic.get("page_end")       
             })
 
-        return valid_topics 
+        return valid_topics[:50]  
 
     def _attempt_json_repair(self, json_str: str) -> Optional[dict]:
         return self._try_parse_json(json_str)

@@ -21,33 +21,39 @@ extraction_router = APIRouter(
 )
 
 def _contains_questions(text: str) -> bool:
-    """Heuristic filter to determine if a chunk likely contains questions/exercises."""
+    """Heuristic filter to determine if a chunk likely contains questions/exercises.
+
+    NOTE: this used to trigger on a single stray '?' anywhere in the chunk,
+    which matches almost any real document (rhetorical questions in body
+    text, section headers, etc.) and defeated the point of filtering.
+    We now require either a strong keyword/pattern signal, OR multiple
+    question marks close together (a much better proxy for an actual
+    question list than a single '?' in normal prose).
+    """
     lower_text = text.lower()
-    
-    en_keywords = ["multiple choice", "true/false", "true / false", "short answer", 
+
+    en_keywords = ["multiple choice", "true/false", "true / false", "short answer",
                    "review questions", "chapter quiz", "knowledge check", "exercises",
                    "practice problems", "test your knowledge", "fill in the blank", "quiz:", "practice"]
     if any(kw in lower_text for kw in en_keywords): return True
-        
+
     ar_keywords = ["سؤال", "أسئلة", "تمرين", "تمارين", "اختر الإجابة", "صح أم خطأ", "اختبار"]
     if any(kw in lower_text for kw in ar_keywords): return True
 
     mcq_pattern = r"(?m)^\s*[\(]?[a-eA-E][\)\.]\s+[A-Za-z]"
     if len(re.findall(mcq_pattern, text)) >= 2: return True
-        
-    if "___" in text or "..." in text: return True
 
-    # Tightened question mark rule:
-    # Requires at least 2 question marks OR 1 question mark + a question word
-    q_count = text.count('?') + text.count('؟')
-    if q_count >= 2: 
-        return True
-        
-    if q_count == 1:
-        q_starters = ["what", "how", "why", "when", "where", "which", "explain", "describe", "list", "ما", "كيف", "لماذا", "هل", "أين", "متى"]
-        # Check if any question word exists in the text alongside the question mark
-        if any(re.search(rf"\b{word}\b", lower_text) for word in q_starters):
-            return True
+    # A numbered line ending in a question mark is a strong "quiz item" signal.
+    numbered_question_pattern = r"(?m)^\s*\d+[\.\)]\s+.*[?؟]\s*$"
+    if re.search(numbered_question_pattern, text): return True
+
+    # Multiple question marks in one chunk is a much stronger signal than a
+    # single one — real question/exercise blocks tend to cluster several
+    # questions together, while ordinary prose rarely has more than one.
+    question_mark_count = text.count('?') + text.count('؟')
+    if question_mark_count >= 3: return True
+
+    if "___" in text: return True
 
     return False
 
