@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     COHERE_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
     NARAYA_API_KEY: Optional[str] = None
-
+    OPENROUTER_API_KEY: Optional[str] = None
+    
     EMBEDDING_MODEL_ID: Optional[str] = None
     EMBEDDING_MODEL_SIZE: Optional[int] = None
 

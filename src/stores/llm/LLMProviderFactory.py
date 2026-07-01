@@ -42,7 +42,7 @@ class LLMProviderFactory:
 
         elif provider == LLMEnums.OPENROUTER.value:
             return OpenRouterProvider(
-                api_key=self.config.QUESTION_OPENAI_API_KEY,
+                api_key=self.config.OPENROUTER_API_KEY,
                 defualt_input_max_characters=self.config.INPUT_DAFAULT_MAX_CHARACTERS,
                 defualt_generation_max_out_tokens=self.config.GENERATION_DAFAULT_MAX_TOKENS,
                 default_generation_temperature=self.config.GENERATION_DAFAULT_TEMPERATURE
