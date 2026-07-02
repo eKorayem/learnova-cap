@@ -22,12 +22,12 @@ class StructureController(BaseController):
         self.BOOK_CHUNK_THRESHOLD = 30
         self.BOOK_CHAR_THRESHOLD = 30000
         
-        # BUMPED TO 80,000 to fully utilize Claude's massive context window
+        # Keep batches around 45k to FORCE the AI to extract granular details (90+ topics)
         self.MAX_LLM_INPUT_CHARS_PER_BATCH = getattr(
-            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 80000
+            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 45000
         )
         self.MAX_STRUCTURE_BATCHES = getattr(
-            self.app_settings, "STRUCTURE_MAX_BATCHES", 15
+            self.app_settings, "STRUCTURE_MAX_BATCHES", 20
         )
         self.STRUCTURE_BATCH_SLEEP_SECONDS = getattr(
             self.app_settings, "STRUCTURE_BATCH_SLEEP_SECONDS", 0 
@@ -78,7 +78,6 @@ class StructureController(BaseController):
             llm_input_lines = []
             for c in chunks:
                 page_num = c.chunk_metadata.get('page', 0) + 1
-                # REMOVED [:400] TRUNCATION! Claude now reads 100% of the slide text
                 text_snippet = str(c.chunk_text).strip()
                 if text_snippet:
                     llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -94,7 +93,6 @@ class StructureController(BaseController):
                 llm_input_lines = []
                 for c in chunks:
                     page_num = c.chunk_metadata.get('page', 0) + 1
-                    # REMOVED [:400] TRUNCATION! Claude now reads 100% of the book text
                     text_snippet = str(c.chunk_text).strip()
                     if text_snippet:
                         llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -153,7 +151,10 @@ class StructureController(BaseController):
                 await asyncio.sleep(self.STRUCTURE_BATCH_SLEEP_SECONDS)
 
         llm_execution_time = time.time() - llm_start_time
+        
+        # --- THIS MERGES THE SPANNING CHAPTERS CORRECTLY ---
         structure = self._merge_structure_batches(batch_structures)
+        
         extracted_count = len(structure.get("topics", [])) if structure else 0
         status = "SUCCESS" if extracted_count > 0 else "FAILED (Fallback Used)"
 
@@ -200,7 +201,6 @@ class StructureController(BaseController):
 
     def _compute_max_output_tokens(self, batch_char_len: int, max_topics: int = None) -> int:
         floor_tokens = 4000
-        # Claude 3.5 Sonnet allows 8192 tokens. Maxing this out prevents JSON truncation.
         ceiling_tokens = 8000 
         scaled = floor_tokens + (batch_char_len // 4)
         estimate = max(floor_tokens, min(ceiling_tokens, scaled))
@@ -237,6 +237,9 @@ class StructureController(BaseController):
 
         return batches
 
+    # =============================================================
+    # THE HIERARCHY FIX: INTELLIGENT BATCH MERGING
+    # =============================================================
     def _merge_structure_batches(self, batch_structures: List[dict]) -> dict:
         if not batch_structures:
             return self._create_fallback_structure()
@@ -303,6 +306,9 @@ class StructureController(BaseController):
 
         return {"topics": merged_topics}
 
+    # =============================================================
+    # RESTORED MISSING WRAPPER FUNCTION
+    # =============================================================
     async def analyze_material_structure(
         self,
         chunk_model: ChunkModel,
@@ -525,7 +531,6 @@ class StructureController(BaseController):
 
         return "\n".join(heading_lines)
 
-    # NEW EXHAUSTIVE PROMPT TO FORCE FULL EXTRACTION
     def _build_full_text_prompt(self, text: str, max_topics: int = None) -> str:
         max_constraint = f"\n- LIMIT: Extract at most {max_topics} top-level topics." if max_topics else ""
         return f"""You are an expert academic parser. Read the following document excerpt and extract its COMPLETE structural outline.
