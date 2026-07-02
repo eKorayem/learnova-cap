@@ -24,7 +24,7 @@ class StructureController(BaseController):
         
         # Reduced to 25,000 to prevent hitting OpenRouter's 4096 output token cap!
         self.MAX_LLM_INPUT_CHARS_PER_BATCH = getattr(
-            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 25000
+            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 150000
         )
         self.MAX_STRUCTURE_BATCHES = getattr(
             self.app_settings, "STRUCTURE_MAX_BATCHES", 20
@@ -198,7 +198,7 @@ class StructureController(BaseController):
 
     def _compute_max_output_tokens(self, batch_char_len: int, max_topics: int = None) -> int:
         floor_tokens = 4000
-        ceiling_tokens = 8000 
+        ceiling_tokens = 12000 
         scaled = floor_tokens + (batch_char_len // 4)
         estimate = max(floor_tokens, min(ceiling_tokens, scaled))
         if max_topics:
