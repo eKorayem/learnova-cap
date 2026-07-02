@@ -303,6 +303,21 @@ class StructureController(BaseController):
 
         return {"topics": merged_topics}
 
+    async def analyze_material_structure(
+        self,
+        chunk_model: ChunkModel,
+        project_id: str,
+        asset_id: str = None,
+        max_topics: int = None,
+        use_all_chunks: bool = False
+    ) -> tuple:
+        raw_structure = await self.analyze_lecture_structure(
+            chunk_model=chunk_model, project_id=project_id, asset_id=asset_id,
+            max_topics=max_topics, use_all_chunks=use_all_chunks
+        )
+        normalized = self.normalize_structure(raw_structure)
+        return normalized, "completed" if normalized else "failed"
+
     def _detect_document_type(self, text: str, total_chunks: int) -> str:
         text_lower = text.lower()
         
