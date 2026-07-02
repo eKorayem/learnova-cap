@@ -22,14 +22,15 @@ class StructureController(BaseController):
         self.BOOK_CHUNK_THRESHOLD = 30
         self.BOOK_CHAR_THRESHOLD = 30000
         
+        # BUMPED TO 80,000 to fully utilize Claude's massive context window
         self.MAX_LLM_INPUT_CHARS_PER_BATCH = getattr(
-            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 60000
+            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 80000
         )
         self.MAX_STRUCTURE_BATCHES = getattr(
-            self.app_settings, "STRUCTURE_MAX_BATCHES", 12
+            self.app_settings, "STRUCTURE_MAX_BATCHES", 15
         )
         self.STRUCTURE_BATCH_SLEEP_SECONDS = getattr(
-            self.app_settings, "STRUCTURE_BATCH_SLEEP_SECONDS", 0 # Set to 0 for OpenRouter speed
+            self.app_settings, "STRUCTURE_BATCH_SLEEP_SECONDS", 0 
         )
 
         self.HEADING_MIN_LENGTH = 3
@@ -72,39 +73,33 @@ class StructureController(BaseController):
 
         doc_type = self._detect_document_type(full_text, total_chunks)
 
-        # =========================================================================
-        # THE FIX: We completely removed the legacy Table of Contents scan limit!
-        # Now, the AI scans 100% of the document in batches, no matter what.
-        # =========================================================================
-
         if doc_type == "lecture" or doc_type in ["slide", "presentation"]:
             strategy = "Slide Reading (Full Document)"
             llm_input_lines = []
             for c in chunks:
                 page_num = c.chunk_metadata.get('page', 0) + 1
-                text_snippet = str(c.chunk_text)[:400].strip()
+                # REMOVED [:400] TRUNCATION! Claude now reads 100% of the slide text
+                text_snippet = str(c.chunk_text).strip()
                 if text_snippet:
                     llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
             
             llm_input = "\n\n".join(llm_input_lines)
-            prompt = self._build_lecture_prompt(llm_input, max_topics)
             
         else:
             llm_input = self._extract_headings_only(full_text, doc_type)
             
             if len(llm_input.strip()) < 1000:
-                self.logger.warning("Book strategy yielded too little text. Falling back to lecture strategy.")
-                strategy = "Slide Reading (Fallback)"
+                self.logger.warning("Book strategy yielded too little text. Falling back to Full Text Reading.")
+                strategy = "Full Text Reading (Fallback)"
                 llm_input_lines = []
                 for c in chunks:
                     page_num = c.chunk_metadata.get('page', 0) + 1
-                    text_snippet = str(c.chunk_text)[:400].strip()
+                    # REMOVED [:400] TRUNCATION! Claude now reads 100% of the book text
+                    text_snippet = str(c.chunk_text).strip()
                     if text_snippet:
                         llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
                 llm_input = "\n\n".join(llm_input_lines)
-                prompt = self._build_lecture_prompt(llm_input, max_topics)
             else:
-                prompt = self._build_book_headings_prompt(llm_input, max_topics)
                 strategy = "Book Headings"
 
         input_batches = self._split_into_batches(llm_input, self.MAX_LLM_INPUT_CHARS_PER_BATCH)
@@ -116,8 +111,8 @@ class StructureController(BaseController):
             input_batches = input_batches[:self.MAX_STRUCTURE_BATCHES]
 
         prompt_builder = {
-            "Slide Reading (Full Document)": self._build_lecture_prompt,
-            "Slide Reading (Fallback)": self._build_lecture_prompt,
+            "Slide Reading (Full Document)": self._build_full_text_prompt,
+            "Full Text Reading (Fallback)": self._build_full_text_prompt,
             "Book Headings": self._build_book_headings_prompt,
         }[strategy]
 
@@ -139,7 +134,6 @@ class StructureController(BaseController):
             total_in_tokens += len(batch_prompt) // 4
             max_out = self._compute_max_output_tokens(len(batch_text), max_topics)
 
-            # Added the await here!
             response = await self._generate_with_retry(
                 prompt=batch_prompt,
                 temperature=self.app_settings.STRUCTURE_TEMPERATURE,
@@ -205,9 +199,10 @@ class StructureController(BaseController):
         return None
 
     def _compute_max_output_tokens(self, batch_char_len: int, max_topics: int = None) -> int:
-        floor_tokens = 2500
-        ceiling_tokens = 4000 
-        scaled = floor_tokens + (batch_char_len // 6)
+        floor_tokens = 4000
+        # Claude 3.5 Sonnet allows 8192 tokens. Maxing this out prevents JSON truncation.
+        ceiling_tokens = 8000 
+        scaled = floor_tokens + (batch_char_len // 4)
         estimate = max(floor_tokens, min(ceiling_tokens, scaled))
         if max_topics:
             estimate = min(estimate, floor_tokens + max_topics * 150)
@@ -490,22 +485,20 @@ class StructureController(BaseController):
 
         return "\n".join(heading_lines)
 
-    def _build_book_headings_prompt(self, text: str, max_topics: int = None) -> str:
+    # NEW EXHAUSTIVE PROMPT TO FORCE FULL EXTRACTION
+    def _build_full_text_prompt(self, text: str, max_topics: int = None) -> str:
         max_constraint = f"\n- LIMIT: Extract at most {max_topics} top-level topics." if max_topics else ""
-        return f"""You are reconstructing a textbook's hierarchical structure from extracted headings.
+        return f"""You are an expert academic parser. Read the following document excerpt and extract its COMPLETE structural outline.
 
 CRITICAL RULES:
-1. DO NOT STOP EARLY - this is a full book, read ALL headings to the end
-2. Group sub-numbered headings (1.1, 1.2, 2.1, etc.) as subtitles under their parent chapter
-3. Ignore: citations, academic years, standalone variables, page numbers
-4. Preserve exact title wording in original language (English or Arabic)
-5. Write a brief 1-sentence description for each item
-6. Output MUST be valid JSON matching the schema exactly
-7. Extract 'page_start' and 'page_end' integers if visible in the text (e.g., from "(Page X)" labels).
-8. 'page_end' is typically the page before the next topic starts. If unknown, output null.
+1. EXHAUSTIVE EXTRACTION: Do not summarize or group distinct topics together. If the text covers 40 different distinct concepts, you MUST extract 40 items.
+2. Group related sub-topics under their overarching parent topic.
+3. Preserve exact title wording from the text.
+4. You MUST use the numbers inside the --- [PAGE X] --- tags to determine the 'page_start' and 'page_end'.
+5. Output MUST be valid JSON matching the schema exactly.
 {max_constraint}
 
-EXTRACTED HEADINGS:
+DOCUMENT TEXT:
 {text}
 
 OUTPUT JSON SCHEMA (strict - no extra fields):
@@ -526,19 +519,22 @@ OUTPUT JSON SCHEMA (strict - no extra fields):
 
 Return ONLY the JSON object, no markdown, no explanations."""
 
-    def _build_lecture_prompt(self, text: str, max_topics: int = None) -> str:
+    def _build_book_headings_prompt(self, text: str, max_topics: int = None) -> str:
         max_constraint = f"\n- LIMIT: Extract at most {max_topics} top-level topics." if max_topics else ""
-        return f"""You are analyzing an academic Lecture/Slide Deck. Extract the main topics.
+        return f"""You are reconstructing a textbook's hierarchical structure from extracted headings.
 
 CRITICAL RULES:
-1. Read the provided slides. Each slide snippet is marked with a --- [PAGE X] --- tag.
-2. Group the slides into logical overarching topics (and subtitles if applicable).
-3. You MUST use the numbers inside the --- [PAGE X] --- tags to determine the 'page_start' and 'page_end' for each topic!
-4. 'page_end' is the slide number right before the next topic begins.
-5. Output MUST be valid JSON matching the schema exactly.
+1. DO NOT STOP EARLY - this is a full book, read ALL headings to the end
+2. Group sub-numbered headings (1.1, 1.2, 2.1, etc.) as subtitles under their parent chapter
+3. Ignore: citations, academic years, standalone variables, page numbers
+4. Preserve exact title wording in original language (English or Arabic)
+5. Write a brief 1-sentence description for each item
+6. Output MUST be valid JSON matching the schema exactly
+7. Extract 'page_start' and 'page_end' integers if visible in the text (e.g., from "(Page X)" labels).
+8. 'page_end' is typically the page before the next topic starts. If unknown, output null.
 {max_constraint}
 
-LECTURE SLIDES:
+EXTRACTED HEADINGS:
 {text}
 
 OUTPUT JSON SCHEMA (strict - no extra fields):
