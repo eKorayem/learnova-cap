@@ -22,12 +22,12 @@ class StructureController(BaseController):
         self.BOOK_CHUNK_THRESHOLD = 30
         self.BOOK_CHAR_THRESHOLD = 30000
         
-        # BUMPED TO 80,000 to fully utilize Claude's massive context window
+        # Reduced to 25,000 to prevent hitting OpenRouter's 4096 output token cap!
         self.MAX_LLM_INPUT_CHARS_PER_BATCH = getattr(
-            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 80000
+            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 25000
         )
         self.MAX_STRUCTURE_BATCHES = getattr(
-            self.app_settings, "STRUCTURE_MAX_BATCHES", 15
+            self.app_settings, "STRUCTURE_MAX_BATCHES", 20
         )
         self.STRUCTURE_BATCH_SLEEP_SECONDS = getattr(
             self.app_settings, "STRUCTURE_BATCH_SLEEP_SECONDS", 0 
@@ -78,7 +78,6 @@ class StructureController(BaseController):
             llm_input_lines = []
             for c in chunks:
                 page_num = c.chunk_metadata.get('page', 0) + 1
-                # REMOVED [:400] TRUNCATION! Claude now reads 100% of the slide text
                 text_snippet = str(c.chunk_text).strip()
                 if text_snippet:
                     llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -94,7 +93,6 @@ class StructureController(BaseController):
                 llm_input_lines = []
                 for c in chunks:
                     page_num = c.chunk_metadata.get('page', 0) + 1
-                    # REMOVED [:400] TRUNCATION! Claude now reads 100% of the book text
                     text_snippet = str(c.chunk_text).strip()
                     if text_snippet:
                         llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -200,7 +198,6 @@ class StructureController(BaseController):
 
     def _compute_max_output_tokens(self, batch_char_len: int, max_topics: int = None) -> int:
         floor_tokens = 4000
-        # Claude 3.5 Sonnet allows 8192 tokens. Maxing this out prevents JSON truncation.
         ceiling_tokens = 8000 
         scaled = floor_tokens + (batch_char_len // 4)
         estimate = max(floor_tokens, min(ceiling_tokens, scaled))
@@ -237,9 +234,6 @@ class StructureController(BaseController):
 
         return batches
 
-    # =============================================================
-    # FIXED: MERGE SPANNING TOPICS INSTEAD OF OVERWRITING
-    # =============================================================
     def _merge_structure_batches(self, batch_structures: List[dict]) -> dict:
         if not batch_structures:
             return self._create_fallback_structure()
@@ -521,7 +515,6 @@ class StructureController(BaseController):
 
         return "\n".join(heading_lines)
 
-    # NEW EXHAUSTIVE PROMPT TO FORCE FULL EXTRACTION
     def _build_full_text_prompt(self, text: str, max_topics: int = None) -> str:
         max_constraint = f"\n- LIMIT: Extract at most {max_topics} top-level topics." if max_topics else ""
         return f"""You are an expert academic parser. Read the following document excerpt and extract its COMPLETE structural outline.
@@ -537,7 +530,7 @@ CRITICAL RULES:
 DOCUMENT TEXT:
 {text}
 
-OUTPUT JSON SCHEMA (strict - no extra fields):
+OUTPUT JSON SCHEMA (strict - NO extra fields, do NOT add "document_title" or any other root keys):
 {{
   "topics": [
     {{
@@ -573,7 +566,7 @@ CRITICAL RULES:
 EXTRACTED HEADINGS:
 {text}
 
-OUTPUT JSON SCHEMA (strict - no extra fields):
+OUTPUT JSON SCHEMA (strict - NO extra fields, do NOT add "document_title" or any other root keys):
 {{
   "topics": [
     {{
@@ -591,6 +584,9 @@ OUTPUT JSON SCHEMA (strict - no extra fields):
 
 Return ONLY the JSON object, no markdown, no explanations."""
 
+    # =============================================================
+    # FIXED: AGGRESSIVE ARRAY EXTRACTION TO PREVENT JSON CUTOFF
+    # =============================================================
     def _parse_structure_response(self, response: str) -> dict:
         if not response:
             return self._create_fallback_structure()
@@ -606,34 +602,49 @@ Return ONLY the JSON object, no markdown, no explanations."""
             parts = response.split("```")
             response = parts[1].strip() if len(parts) >= 3 else response.replace("```", "").strip()
 
-        first_brace, last_brace = response.find("{"), response.rfind("}")
-        first_bracket, last_bracket = response.find("["), response.rfind("]")
+        # Try to parse it normally first
+        first_brace = response.find("{")
+        last_brace = response.rfind("}")
+        
+        if first_brace != -1 and last_brace != -1:
+            json_str = response[first_brace:last_brace + 1]
+            structure = self._try_parse_json(json_str)
+            if structure and "topics" in structure:
+                valid = self._validate_topics(structure["topics"])
+                if valid:
+                    return {"topics": valid}
 
-        if first_brace == -1 and first_bracket == -1:
-            self.logger.warning("No JSON structure found in response")
-            return self._create_fallback_structure()
+        # If it failed (because it was cut off or had extra root keys), 
+        # violently rip out the "topics" array using Regex!
+        self.logger.warning("Normal parsing failed. Attempting aggressive array extraction...")
+        
+        match = re.search(r'"topics"\s*:\s*(\[.*)', response, re.DOTALL | re.IGNORECASE)
+        if match:
+            array_str = match.group(1)
+            
+            # Find the last known good closing bracket to repair cut-off JSON
+            last_bracket = array_str.rfind("]")
+            if last_bracket != -1:
+                array_str = array_str[:last_bracket + 1]
+            else:
+                last_inner_brace = array_str.rfind("}")
+                if last_inner_brace != -1:
+                    array_str = array_str[:last_inner_brace + 1] + "]"
+            
+            try:
+                topics_arr = json.loads(array_str)
+                valid = self._validate_topics(topics_arr)
+                if valid:
+                    return {"topics": valid}
+            except json.JSONDecodeError:
+                topics_arr = self._try_parse_json(array_str)
+                if topics_arr and isinstance(topics_arr, list):
+                    valid = self._validate_topics(topics_arr)
+                    if valid:
+                        return {"topics": valid}
 
-        if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
-            json_str = response[first_brace:last_brace + 1] if last_brace > first_brace else response[first_brace:]
-        else:
-            json_str = response[first_bracket:last_bracket + 1] if last_bracket > first_bracket else response[first_bracket:]
-
-        structure = self._try_parse_json(json_str)
-        if not structure:
-            return self._create_fallback_structure()
-
-        if isinstance(structure, list):
-            structure = {"topics": structure}
-
-        if "topics" not in structure:
-            return self._create_fallback_structure()
-
-        valid_topics = self._validate_topics(structure["topics"])
-        if not valid_topics:
-            return self._create_fallback_structure()
-
-        structure["topics"] = valid_topics
-        return structure
+        self.logger.warning("No JSON structure could be salvaged from the response")
+        return self._create_fallback_structure()
 
     def _try_parse_json(self, json_str: str) -> Optional[Any]:
         json_str = json_str.strip()
@@ -666,7 +677,6 @@ Return ONLY the JSON object, no markdown, no explanations."""
         except json.JSONDecodeError:
             pass
 
-        self.logger.warning(f"All JSON repair attempts failed for: {json_str[:100]}...")
         return None
 
     def _validate_topics(self, topics: Any) -> List[dict]:
