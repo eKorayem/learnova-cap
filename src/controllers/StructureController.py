@@ -241,18 +241,58 @@ class StructureController(BaseController):
         if not batch_structures:
             return self._create_fallback_structure()
 
-        merged_topics = []
-        seen_titles = set()
+        merged_topics_dict = {}
 
         for structure in batch_structures:
             for topic in structure.get("topics", []):
                 title = str(topic.get("title", "")).strip()
-                key = title.lower()
-                if not title or key in seen_titles:
+                if not title:
                     continue
-                seen_titles.add(key)
-                merged_topics.append(topic)
 
+                key = title.lower()
+
+                if key not in merged_topics_dict:
+                    # First time seeing this topic, add it to our dictionary
+                    merged_topics_dict[key] = topic
+                    if "subtitles" not in merged_topics_dict[key] or merged_topics_dict[key]["subtitles"] is None:
+                        merged_topics_dict[key]["subtitles"] = []
+                else:
+                    # Topic already exists! (It spanned across two batches)
+                    # We must MERGE the subtitles, not throw them away.
+                    existing_subtitles = merged_topics_dict[key].get("subtitles") or []
+                    new_subtitles = topic.get("subtitles") or []
+
+                    # Keep track of existing subtitle names to avoid duplicate subtopics
+                    existing_sub_keys = {
+                        str(sub.get("title", "")).lower().strip() 
+                        for sub in existing_subtitles
+                    }
+
+                    for new_sub in new_subtitles:
+                        sub_key = str(new_sub.get("title", "")).lower().strip()
+                        if sub_key and sub_key not in existing_sub_keys:
+                            existing_subtitles.append(new_sub)
+                            existing_sub_keys.add(sub_key)
+
+                    merged_topics_dict[key]["subtitles"] = existing_subtitles
+
+                    # Safely extend the page_end of the parent topic if this batch went further
+                    new_end = topic.get("page_end")
+                    old_end = merged_topics_dict[key].get("page_end")
+                    try:
+                        new_end_val = int(new_end) if new_end is not None else None
+                        old_end_val = int(old_end) if old_end is not None else None
+                        
+                        if new_end_val is not None:
+                            if old_end_val is None or new_end_val > old_end_val:
+                                merged_topics_dict[key]["page_end"] = new_end_val
+                    except Exception:
+                        pass # Ignore if the AI returned a weird string instead of an int
+
+        # Convert our merged dictionary back into a list
+        merged_topics = list(merged_topics_dict.values())
+
+        # Recalculate the order indices cleanly
         for idx, topic in enumerate(merged_topics):
             topic["order"] = idx
             for sub_idx, sub in enumerate(topic.get("subtitles", [])):
@@ -262,21 +302,6 @@ class StructureController(BaseController):
             return self._create_fallback_structure()
 
         return {"topics": merged_topics}
-
-    async def analyze_material_structure(
-        self,
-        chunk_model: ChunkModel,
-        project_id: str,
-        asset_id: str = None,
-        max_topics: int = None,
-        use_all_chunks: bool = False
-    ) -> tuple:
-        raw_structure = await self.analyze_lecture_structure(
-            chunk_model=chunk_model, project_id=project_id, asset_id=asset_id,
-            max_topics=max_topics, use_all_chunks=use_all_chunks
-        )
-        normalized = self.normalize_structure(raw_structure)
-        return normalized, "completed" if normalized else "failed"
 
     def _detect_document_type(self, text: str, total_chunks: int) -> str:
         text_lower = text.lower()
