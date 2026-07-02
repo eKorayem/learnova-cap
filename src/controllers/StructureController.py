@@ -22,12 +22,12 @@ class StructureController(BaseController):
         self.BOOK_CHUNK_THRESHOLD = 30
         self.BOOK_CHAR_THRESHOLD = 30000
         
-        # Keep batches around 45k to FORCE the AI to extract granular details (90+ topics)
+        # BUMPED TO 80,000 to fully utilize Claude's massive context window
         self.MAX_LLM_INPUT_CHARS_PER_BATCH = getattr(
-            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 45000
+            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 80000
         )
         self.MAX_STRUCTURE_BATCHES = getattr(
-            self.app_settings, "STRUCTURE_MAX_BATCHES", 20
+            self.app_settings, "STRUCTURE_MAX_BATCHES", 15
         )
         self.STRUCTURE_BATCH_SLEEP_SECONDS = getattr(
             self.app_settings, "STRUCTURE_BATCH_SLEEP_SECONDS", 0 
@@ -78,6 +78,7 @@ class StructureController(BaseController):
             llm_input_lines = []
             for c in chunks:
                 page_num = c.chunk_metadata.get('page', 0) + 1
+                # REMOVED [:400] TRUNCATION! Claude now reads 100% of the slide text
                 text_snippet = str(c.chunk_text).strip()
                 if text_snippet:
                     llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -93,6 +94,7 @@ class StructureController(BaseController):
                 llm_input_lines = []
                 for c in chunks:
                     page_num = c.chunk_metadata.get('page', 0) + 1
+                    # REMOVED [:400] TRUNCATION! Claude now reads 100% of the book text
                     text_snippet = str(c.chunk_text).strip()
                     if text_snippet:
                         llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -151,10 +153,7 @@ class StructureController(BaseController):
                 await asyncio.sleep(self.STRUCTURE_BATCH_SLEEP_SECONDS)
 
         llm_execution_time = time.time() - llm_start_time
-        
-        # --- THIS MERGES THE SPANNING CHAPTERS CORRECTLY ---
         structure = self._merge_structure_batches(batch_structures)
-        
         extracted_count = len(structure.get("topics", [])) if structure else 0
         status = "SUCCESS" if extracted_count > 0 else "FAILED (Fallback Used)"
 
@@ -201,6 +200,7 @@ class StructureController(BaseController):
 
     def _compute_max_output_tokens(self, batch_char_len: int, max_topics: int = None) -> int:
         floor_tokens = 4000
+        # Claude 3.5 Sonnet allows 8192 tokens. Maxing this out prevents JSON truncation.
         ceiling_tokens = 8000 
         scaled = floor_tokens + (batch_char_len // 4)
         estimate = max(floor_tokens, min(ceiling_tokens, scaled))
@@ -238,7 +238,7 @@ class StructureController(BaseController):
         return batches
 
     # =============================================================
-    # THE HIERARCHY FIX: INTELLIGENT BATCH MERGING
+    # FIXED: MERGE SPANNING TOPICS INSTEAD OF OVERWRITING
     # =============================================================
     def _merge_structure_batches(self, batch_structures: List[dict]) -> dict:
         if not batch_structures:
@@ -255,17 +255,13 @@ class StructureController(BaseController):
                 key = title.lower()
 
                 if key not in merged_topics_dict:
-                    # First time seeing this topic, add it to our dictionary
                     merged_topics_dict[key] = topic
                     if "subtitles" not in merged_topics_dict[key] or merged_topics_dict[key]["subtitles"] is None:
                         merged_topics_dict[key]["subtitles"] = []
                 else:
-                    # Topic already exists! (It spanned across two batches)
-                    # We must MERGE the subtitles, not throw them away.
                     existing_subtitles = merged_topics_dict[key].get("subtitles") or []
                     new_subtitles = topic.get("subtitles") or []
 
-                    # Keep track of existing subtitle names to avoid duplicate subtopics
                     existing_sub_keys = {
                         str(sub.get("title", "")).lower().strip() 
                         for sub in existing_subtitles
@@ -279,7 +275,6 @@ class StructureController(BaseController):
 
                     merged_topics_dict[key]["subtitles"] = existing_subtitles
 
-                    # Safely extend the page_end of the parent topic if this batch went further
                     new_end = topic.get("page_end")
                     old_end = merged_topics_dict[key].get("page_end")
                     try:
@@ -290,12 +285,10 @@ class StructureController(BaseController):
                             if old_end_val is None or new_end_val > old_end_val:
                                 merged_topics_dict[key]["page_end"] = new_end_val
                     except Exception:
-                        pass # Ignore if the AI returned a weird string instead of an int
+                        pass 
 
-        # Convert our merged dictionary back into a list
         merged_topics = list(merged_topics_dict.values())
 
-        # Recalculate the order indices cleanly
         for idx, topic in enumerate(merged_topics):
             topic["order"] = idx
             for sub_idx, sub in enumerate(topic.get("subtitles", [])):
@@ -306,9 +299,6 @@ class StructureController(BaseController):
 
         return {"topics": merged_topics}
 
-    # =============================================================
-    # RESTORED MISSING WRAPPER FUNCTION
-    # =============================================================
     async def analyze_material_structure(
         self,
         chunk_model: ChunkModel,
@@ -531,6 +521,7 @@ class StructureController(BaseController):
 
         return "\n".join(heading_lines)
 
+    # NEW EXHAUSTIVE PROMPT TO FORCE FULL EXTRACTION
     def _build_full_text_prompt(self, text: str, max_topics: int = None) -> str:
         max_constraint = f"\n- LIMIT: Extract at most {max_topics} top-level topics." if max_topics else ""
         return f"""You are an expert academic parser. Read the following document excerpt and extract its COMPLETE structural outline.
