@@ -10,6 +10,7 @@ from routes.schemas.question import (
 from typing import List, Optional
 import json
 import logging
+import asyncio
 
 
 class QuestionGenerationController(BaseController):
@@ -76,7 +77,6 @@ class QuestionGenerationController(BaseController):
                 )
 
         # Run all topics in parallel
-        import asyncio
         results = await asyncio.gather(
             *[process_topic(topic) for topic in request.topics]
         )
@@ -200,11 +200,13 @@ class QuestionGenerationController(BaseController):
         )
 
         try:
-            response = self.generation_client.generate_text(
-                prompt=prompt,
-                chat_history=[],
-                temperature=self.app_settings.QUESTION_TEMPERATURE,
-                max_output_tokens=self.app_settings.GENERATION_DAFAULT_MAX_TOKENS
+            # <-- THREADING ADDED HERE to prevent FastAPI freezing
+            response = await asyncio.to_thread(
+                self.generation_client.generate_text,
+                prompt, # The prompt
+                [], # Empty chat history
+                self.app_settings.GENERATION_DAFAULT_MAX_TOKENS,
+                self.app_settings.QUESTION_TEMPERATURE
             )
 
             if not response:
@@ -220,8 +222,6 @@ class QuestionGenerationController(BaseController):
             questions = []
             for q in raw_questions:
                 try:
-
-
                     questions.append(QuestionResponse(
                         topic_id=topic_id,
                         topic_title=topic_title,

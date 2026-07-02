@@ -2,29 +2,21 @@ from ..LLMInterface import LLMInterface
 from openai import OpenAI
 import logging
 from ..LLMEnums import OpenAIEnums
-
+import asyncio 
 
 class OpenRouterProvider(LLMInterface):
 
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-    def __init__(self,
-                 api_key: str,
-                 defualt_input_max_characters: int = 1000,
-                 defualt_generation_max_out_tokens: int = 1000,
-                 default_generation_temperature: float = 0.1):
-
+    def __init__(self, api_key: str, defualt_input_max_characters: int = 1000, defualt_generation_max_out_tokens: int = 1000, default_generation_temperature: float = 0.1):
         self.api_key = api_key
-
         self.defualt_input_max_characters = defualt_input_max_characters
         self.defualt_generation_max_out_tokens = defualt_generation_max_out_tokens
         self.default_generation_temperature = default_generation_temperature
-
         self.generation_model_id = None
         self.embedding_model_id = None
         self.embedding_size = None
 
-        # Always points to OpenRouter — never conflicts with existing OpenAI setup
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=self.OPENROUTER_BASE_URL
@@ -37,45 +29,34 @@ class OpenRouterProvider(LLMInterface):
         self.generation_model_id = model_id
 
     def set_embedding_model(self, model_id: str, embedding_size: int):
-        self.logger.warning("OpenRouterProvider: embedding not supported. Use SentenceTransformerProvider instead.")
+        self.logger.warning("OpenRouterProvider: embedding not supported.")
         self.embedding_model_id = model_id
         self.embedding_size = embedding_size
 
     def process_text(self, text: str):
         return text[:self.defualt_input_max_characters + 1].strip()
 
-    def generate_text(self, prompt: str, chat_history: list = [],
-                      max_output_tokens: int = None,
-                      temperature: float = None):
-
-        if not self.client:
-            self.logger.error("OpenRouterProvider: client not initialized")
-            return None
-
-        if not self.generation_model_id:
-            self.logger.error("OpenRouterProvider: generation model not set")
+    def generate_text(self, prompt: str, chat_history: list = [], max_output_tokens: int = None, temperature: float = None):
+        if not self.client or not self.generation_model_id:
+            self.logger.error("OpenRouterProvider: client or model not initialized")
             return None
 
         max_output_tokens = max_output_tokens if max_output_tokens else self.defualt_generation_max_out_tokens
-        temperature = temperature if temperature else self.default_generation_temperature
+        temperature = temperature if temperature is not None else self.default_generation_temperature
 
         messages = chat_history.copy()
-        messages.append(
-            self.construct_prompt(prompt=prompt, role=OpenAIEnums.USER.value)
-        )
+        messages.append(self.construct_prompt(prompt=prompt, role=OpenAIEnums.USER.value))
 
         try:
             response = self.client.chat.completions.create(
-                model=self.generation_model_id,
+                model=self.generation_model_id.strip(), # <-- PROTECTS AGAINST TRAILING SPACES IN .ENV
                 messages=messages,
                 max_tokens=max_output_tokens,
                 temperature=temperature
             )
-
             if not response or not response.choices or len(response.choices) == 0:
                 self.logger.error("OpenRouterProvider: empty response")
                 return None
-
             return response.choices[0].message.content
 
         except Exception as e:
@@ -83,10 +64,7 @@ class OpenRouterProvider(LLMInterface):
             return None
 
     def embed_text(self, text: str, document_type: str = None):
-        raise NotImplementedError(
-            "OpenRouterProvider does not support embeddings. "
-            "Use SentenceTransformerProvider instead."
-        )
+        raise NotImplementedError("OpenRouterProvider does not support embeddings.")
 
     def construct_prompt(self, prompt: str, role: str):
         return {
@@ -99,21 +77,19 @@ class OpenRouterProvider(LLMInterface):
             self.logger.error("OpenRouterProvider: client or model not initialized")
             return None
 
-        # Force JSON output instructions
         import json
         schema_instruction = f"\n\nYou MUST return ONLY valid JSON matching this schema:\n{json.dumps(response_schema)}"
-        
         messages = [
             {"role": "system", "content": system_prompt + schema_instruction},
             {"role": "user", "content": user_prompt}
         ]
-
-        temp = temperature if temperature is not None else self.default_generation_temperature # <-- ADDED
+        temp = temperature if temperature is not None else self.default_generation_temperature
 
         try:
-            # We use an async wrapper or just run it sync depending on your client setup
-            response = self.client.chat.completions.create(
-                model=self.generation_model_id,
+            # <-- RUNS IN BACKGROUND THREAD TO PREVENT FASTAPI FREEZING
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
+                model=self.generation_model_id.strip(), # <-- PROTECTS AGAINST TRAILING SPACES IN .ENV
                 messages=messages,
                 max_tokens=self.defualt_generation_max_out_tokens,
                 temperature=temp,
@@ -121,7 +97,7 @@ class OpenRouterProvider(LLMInterface):
             )
             result = response.choices[0].message.content
             print(f"\n=== RAW LLM RESPONSE ===\n{result}\n========================\n", flush=True)
-            return response.choices[0].message.content
+            return result
 
         except Exception as e:
             self.logger.error(f"OpenRouterProvider structured generation error: {e}")

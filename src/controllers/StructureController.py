@@ -179,7 +179,7 @@ class StructureController(BaseController):
 
                 max_out = self._compute_max_output_tokens(len(batch_text), max_topics)
 
-                response = self._generate_with_retry(
+                response = await self._generate_with_retry(
                     prompt=batch_prompt,
                     temperature=self.app_settings.STRUCTURE_TEMPERATURE,
                     max_output_tokens=max_out,
@@ -231,36 +231,35 @@ class StructureController(BaseController):
             self.logger.error(f"DEBUG: Fatal error during extraction: {e}")
             return self._create_fallback_structure()
 
-    def _generate_with_retry(self, prompt: str, temperature: float, max_output_tokens: int, retries: int = 2):
-        """Calls the LLM with a couple of retries so one transient rate-limit/
-        network error on a single batch doesn't nuke the whole document."""
+    async def _generate_with_retry(self, prompt: str, temperature: float, max_output_tokens: int, retries: int = 2):
+        import asyncio
         last_error = None
         for attempt in range(retries + 1):
             try:
-                return self.generation_client.generate_text(
-                    prompt=prompt,
-                    temperature=temperature,
-                    max_output_tokens=max_output_tokens,
+                # <-- Runs sync OpenAI call in a background thread to prevent freezing
+                response = await asyncio.to_thread(
+                    self.generation_client.generate_text,
+                    prompt, # prompt
+                    [], # empty chat history
+                    max_output_tokens,
+                    temperature
                 )
+                if response:
+                    return response
             except Exception as e:
                 last_error = e
                 if attempt < retries:
                     self.logger.warning(f"DEBUG: LLM call failed (attempt {attempt + 1}/{retries + 1}): {e}. Retrying...")
-                    time.sleep(3 * (attempt + 1))
+                    await asyncio.sleep(3 * (attempt + 1))
         self.logger.error(f"DEBUG: LLM call failed after {retries + 1} attempts: {last_error}")
         return None
 
     def _compute_max_output_tokens(self, batch_char_len: int, max_topics: int = None) -> int:
-        """Scale the output token budget with how much input text we sent,
-        instead of a flat cap that truncates JSON for larger batches.
-        Rough heuristic: bigger input -> more topics/subtitles -> more JSON."""
         floor_tokens = 2500
-        ceiling_tokens = 8000
-        # ~1 output token needed per ~6 input chars worth of structure, loosely
+        ceiling_tokens = 4000 # <-- LOWERED TO 4000 TO PREVENT OPENROUTER 400 ERRORS
         scaled = floor_tokens + (batch_char_len // 6)
         estimate = max(floor_tokens, min(ceiling_tokens, scaled))
         if max_topics:
-            # Don't over-allocate if the caller explicitly limited topic count
             estimate = min(estimate, floor_tokens + max_topics * 150)
         return int(estimate)
 
