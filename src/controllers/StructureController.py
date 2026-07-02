@@ -22,15 +22,11 @@ class StructureController(BaseController):
         self.BOOK_CHUNK_THRESHOLD = 30
         self.BOOK_CHAR_THRESHOLD = 30000
         
-        # BUMPED TO 80,000 to fully utilize Claude's massive context window
         self.MAX_LLM_INPUT_CHARS_PER_BATCH = getattr(
             self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 80000
         )
         self.MAX_STRUCTURE_BATCHES = getattr(
             self.app_settings, "STRUCTURE_MAX_BATCHES", 15
-        )
-        self.STRUCTURE_BATCH_SLEEP_SECONDS = getattr(
-            self.app_settings, "STRUCTURE_BATCH_SLEEP_SECONDS", 0 
         )
 
         self.HEADING_MIN_LENGTH = 3
@@ -78,7 +74,6 @@ class StructureController(BaseController):
             llm_input_lines = []
             for c in chunks:
                 page_num = c.chunk_metadata.get('page', 0) + 1
-                # REMOVED [:400] TRUNCATION! Claude now reads 100% of the slide text
                 text_snippet = str(c.chunk_text).strip()
                 if text_snippet:
                     llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -94,7 +89,6 @@ class StructureController(BaseController):
                 llm_input_lines = []
                 for c in chunks:
                     page_num = c.chunk_metadata.get('page', 0) + 1
-                    # REMOVED [:400] TRUNCATION! Claude now reads 100% of the book text
                     text_snippet = str(c.chunk_text).strip()
                     if text_snippet:
                         llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -116,41 +110,56 @@ class StructureController(BaseController):
             "Book Headings": self._build_book_headings_prompt,
         }[strategy]
 
+        llm_start_time = time.time()
+
+        # ==============================================================
+        # 🚀 PARALLEL EXTRACTION ENGINE
+        # Processes all sections of the book simultaneously!
+        # ==============================================================
+        semaphore = asyncio.Semaphore(6) # Max 6 parallel batches
+
+        async def process_batch(i: int, batch_text: str):
+            async with semaphore:
+                batch_text_for_prompt = batch_text
+                if len(input_batches) > 1:
+                    batch_text_for_prompt = (
+                        f"[This is part {i + 1} of {len(input_batches)} of a larger document. "
+                        f"Only extract topics that are actually present in this excerpt.]\n\n"
+                        f"{batch_text}"
+                    )
+
+                batch_prompt = prompt_builder(batch_text_for_prompt, max_topics)
+                in_tokens = len(batch_prompt) // 4
+                max_out = self._compute_max_output_tokens(len(batch_text), max_topics)
+
+                response = await self._generate_with_retry(
+                    prompt=batch_prompt,
+                    temperature=self.app_settings.STRUCTURE_TEMPERATURE,
+                    max_output_tokens=max_out,
+                )
+
+                if not response:
+                    self.logger.warning(f"DEBUG: Batch {i + 1}/{len(input_batches)} returned no response.")
+                    return None, in_tokens, 0
+
+                out_tokens = len(response) // 4
+                batch_structure = self._parse_structure_response(response)
+                return batch_structure, in_tokens, out_tokens
+
+        # Fire all batches at the same time
+        self.logger.info(f"Firing {len(input_batches)} parallel LLM extraction batches...")
+        tasks = [process_batch(i, text) for i, text in enumerate(input_batches)]
+        results = await asyncio.gather(*tasks)
+
+        # Merge results
         batch_structures = []
         total_in_tokens = 0
         total_out_tokens = 0
-        llm_start_time = time.time()
-
-        for i, batch_text in enumerate(input_batches):
-            batch_text_for_prompt = batch_text
-            if len(input_batches) > 1:
-                batch_text_for_prompt = (
-                    f"[This is part {i + 1} of {len(input_batches)} of a larger document. "
-                    f"Only extract topics that are actually present in this excerpt.]\n\n"
-                    f"{batch_text}"
-                )
-
-            batch_prompt = prompt_builder(batch_text_for_prompt, max_topics)
-            total_in_tokens += len(batch_prompt) // 4
-            max_out = self._compute_max_output_tokens(len(batch_text), max_topics)
-
-            response = await self._generate_with_retry(
-                prompt=batch_prompt,
-                temperature=self.app_settings.STRUCTURE_TEMPERATURE,
-                max_output_tokens=max_out,
-            )
-
-            if not response:
-                self.logger.warning(f"DEBUG: Batch {i + 1}/{len(input_batches)} returned no response, skipping.")
-                continue
-
-            total_out_tokens += len(response) // 4
-            batch_structure = self._parse_structure_response(response)
-            if batch_structure and batch_structure.get("topics"):
-                batch_structures.append(batch_structure)
-
-            if i < len(input_batches) - 1 and self.STRUCTURE_BATCH_SLEEP_SECONDS:
-                await asyncio.sleep(self.STRUCTURE_BATCH_SLEEP_SECONDS)
+        for res in results:
+            if res[0] and res[0].get("topics"):
+                batch_structures.append(res[0])
+            total_in_tokens += res[1]
+            total_out_tokens += res[2]
 
         llm_execution_time = time.time() - llm_start_time
         structure = self._merge_structure_batches(batch_structures)
@@ -164,10 +173,10 @@ class StructureController(BaseController):
         print(f"Document Type     : {doc_type.upper()}")
         print(f"Parsing Strategy  : {strategy}")
         print(f"Chunks Processed  : {total_chunks}")
-        print(f"Text Reduction    : {len(full_text)} -> {len(llm_input)} chars")
-        print(f"Batches Sent      : {len(input_batches)}")
+        print(f"Batches Sent      : {len(input_batches)} (Simultaneous)")
         print(f"Approx In Tokens  : ~{total_in_tokens}")
         print(f"Approx Out Tokens : ~{total_out_tokens}")
+        print(f"LLM Latency       : {llm_execution_time:.2f} seconds")
         print(f"Total Time        : {total_time:.2f} seconds")
         print(f"Final Status      : {status} ({extracted_count} topics found)")
         print("="*50 + "\n")
@@ -200,7 +209,6 @@ class StructureController(BaseController):
 
     def _compute_max_output_tokens(self, batch_char_len: int, max_topics: int = None) -> int:
         floor_tokens = 4000
-        # Claude 3.5 Sonnet allows 8192 tokens. Maxing this out prevents JSON truncation.
         ceiling_tokens = 8000 
         scaled = floor_tokens + (batch_char_len // 4)
         estimate = max(floor_tokens, min(ceiling_tokens, scaled))
@@ -485,7 +493,6 @@ class StructureController(BaseController):
 
         return "\n".join(heading_lines)
 
-    # NEW EXHAUSTIVE PROMPT TO FORCE FULL EXTRACTION
     def _build_full_text_prompt(self, text: str, max_topics: int = None) -> str:
         max_constraint = f"\n- LIMIT: Extract at most {max_topics} top-level topics." if max_topics else ""
         return f"""You are an expert academic parser. Read the following document excerpt and extract its COMPLETE structural outline.
