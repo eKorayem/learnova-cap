@@ -222,15 +222,25 @@ class QuestionGenerationController(BaseController):
             questions = []
             for q in raw_questions:
                 try:
+                    q_type = q.get("type", "")
+                    expected = q.get("expected_answer")
+                    
+                    # SAFETY NET: Prevent backend HTTP 422 Validation Crash
+                    if q_type in ["short_answer", "essay"]:
+                        if not expected or str(expected).strip() == "":
+                            expected = "Refer to the grading rubric for the required key points."
+                    elif not expected:
+                        expected = "" # Ensure it's safely set to a string
+
                     questions.append(QuestionResponse(
                         topic_id=topic_id,
                         topic_title=topic_title,
-                        type=q.get("type", ""),
+                        type=q_type,
                         difficulty=q.get("difficulty", ""),
                         question_text=q.get("question_text", ""),
                         explanation=q.get("explanation"),
                         options=q.get("options"),
-                        expected_answer=q.get("expected_answer", ""),
+                        expected_answer=expected,
                         grading_rubric=q.get("grading_rubric")
                     ))
                 except Exception as e:
@@ -288,11 +298,13 @@ RULES:
    - Do NOT include an "options" array (or set it to null)
    - You MUST include a "grading_rubric" object exactly like this:
      {{"key_points":["point 1","point 2","point 3"]}}
+   - "expected_answer" MUST contain a sample correct answer string. NEVER leave it blank or "".
 
 6. For essay: 
    - Do NOT include an "options" array (or set it to null)
    - You MUST include a "grading_rubric" object exactly like this:
      {{"criteria":[{{"name":"...","description":"..."}},{{"name":"...","description":"..."}}]}}
+   - "expected_answer" MUST contain a sample correct answer string. NEVER leave it blank or "".
 
 7. Difficulty must exactly match the requested level: "easy", "medium", or "hard"
 8. Base ALL questions strictly on the provided content — do not use outside knowledge
