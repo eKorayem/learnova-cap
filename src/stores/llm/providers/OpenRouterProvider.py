@@ -72,7 +72,8 @@ class OpenRouterProvider(LLMInterface):
             "content": self.process_text(prompt)
         }
     
-    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict, temperature: float = None):
+    # FIXED: Added max_output_tokens to the method signature!
+    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict, temperature: float = None, max_output_tokens: int = None):
         if not self.client or not self.generation_model_id:
             self.logger.error("OpenRouterProvider: client or model not initialized")
             return None
@@ -83,15 +84,18 @@ class OpenRouterProvider(LLMInterface):
             {"role": "system", "content": system_prompt + schema_instruction},
             {"role": "user", "content": user_prompt}
         ]
+        
         temp = temperature if temperature is not None else self.default_generation_temperature
+        
+        # FIXED: Safely apply the max_output_tokens if provided
+        out_tokens = max_output_tokens if max_output_tokens is not None else self.defualt_generation_max_out_tokens
 
         try:
-            # <-- RUNS IN BACKGROUND THREAD TO PREVENT FASTAPI FREEZING
             response = await asyncio.to_thread(
                 self.client.chat.completions.create,
-                model=self.generation_model_id.strip(), # <-- PROTECTS AGAINST TRAILING SPACES IN .ENV
+                model=self.generation_model_id.strip(), 
                 messages=messages,
-                max_tokens=self.defualt_generation_max_out_tokens,
+                max_tokens=out_tokens, # <-- Now using the upgraded limit!
                 temperature=temp,
                 response_format={"type": "json_object"}
             )
