@@ -121,7 +121,7 @@ class JinaProvider(LLMInterface):
                             
                         retries += 1
                         self.logger.warning(
-                            f"⚠️ Jina 429 Limit! Sleeping exactly {wait_time}s... (Attempt {retries}/{max_retries})"
+                            f"Jina 429 Limit! Sleeping exactly {wait_time}s... (Attempt {retries}/{max_retries})"
                         )
                         import asyncio
                         await asyncio.sleep(wait_time)
