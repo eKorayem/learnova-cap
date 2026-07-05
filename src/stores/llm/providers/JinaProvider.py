@@ -69,8 +69,7 @@ class JinaProvider(LLMInterface):
 
     async def embed_batch_async(self, texts: list, batch_size: int = 100):
         """
-        Async batch embedding — fires HTTP requests in parallel.
-        Includes Smart Retry with 60-second backoff for Jina 429 Rate Limits.
+        Async batch embedding with Staggered Cascade and Dynamic Header Parsing.
         """
         if not texts:
             return []
@@ -89,7 +88,7 @@ class JinaProvider(LLMInterface):
             "Content-Type": "application/json"
         }
 
-        async def fetch_batch(client, batch, idx, max_retries=3):
+        async def fetch_batch(client, batch, idx, max_retries=5):
             retries = 0
             while retries < max_retries:
                 try:
@@ -109,16 +108,24 @@ class JinaProvider(LLMInterface):
                         self.logger.info(f"Jina batch {idx + 1}/{len(batches)} ✓")
                         return vectors
                         
-                    # RATE LIMITED: Jina's 100k TPM limit hit. Sleep and retry.
+                    # RATE LIMITED: Read the headers for exact wait time!
                     elif response.status_code == 429:
+                        # Check if Jina tells us exactly how long to wait
+                        retry_after = response.headers.get("retry-after")
+                        
+                        if retry_after:
+                            wait_time = float(retry_after)
+                        else:
+                            # Fallback: Fast Exponential Backoff (2s, 4s, 8s...) instead of 60s
+                            wait_time = 2 * (2 ** retries)
+                            
                         retries += 1
                         self.logger.warning(
-                            f"⚠️ Jina Rate Limit (429) hit on batch {idx+1}! "
-                            f"Sleeping 60 seconds... (Attempt {retries}/{max_retries})"
+                            f"⚠️ Jina 429 Limit! Sleeping exactly {wait_time}s... (Attempt {retries}/{max_retries})"
                         )
                         import asyncio
-                        await asyncio.sleep(60)
-                        continue # Restart the while loop
+                        await asyncio.sleep(wait_time)
+                        continue
                         
                     # FATAL ERROR: 400 Bad Request, etc.
                     else:
@@ -133,11 +140,15 @@ class JinaProvider(LLMInterface):
             return None
 
         async with httpx.AsyncClient(timeout=60) as client:
-            # Free tier limits to 2 concurrent requests
             import asyncio
             semaphore = asyncio.Semaphore(2)
 
             async def fetch_with_semaphore(batch, idx):
+                # THE STAGGERED CASCADE: 
+                # Batch 0 waits 0s, Batch 1 waits 0.5s, Batch 2 waits 1.0s...
+                # This naturally spaces out the traffic so Jina doesn't get overwhelmed!
+                await asyncio.sleep(idx * 0.5) 
+                
                 async with semaphore:
                     return await fetch_batch(client, batch, idx)
 
