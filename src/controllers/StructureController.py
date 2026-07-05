@@ -121,10 +121,7 @@ class StructureController(BaseController):
         total_out_tokens = 0
         llm_start_time = time.time()
 
-        # ---------------------------------------------------------
-        # THE FIX: ASYNC PARALLEL BATCH PROCESSING
-        # ---------------------------------------------------------
-        async def process_single_batch(i: int, batch_text: str):
+        for i, batch_text in enumerate(input_batches):
             batch_text_for_prompt = batch_text
             if len(input_batches) > 1:
                 batch_text_for_prompt = (
@@ -134,7 +131,7 @@ class StructureController(BaseController):
                 )
 
             batch_prompt = prompt_builder(batch_text_for_prompt, max_topics)
-            in_tokens = len(batch_prompt) // 4
+            total_in_tokens += len(batch_prompt) // 4
             max_out = self._compute_max_output_tokens(len(batch_text), max_topics)
 
             response = await self._generate_with_retry(
@@ -142,34 +139,18 @@ class StructureController(BaseController):
                 temperature=self.app_settings.STRUCTURE_TEMPERATURE,
                 max_output_tokens=max_out,
             )
-            
-            # Return index 'i' so we can re-sort them chronologically later
-            return i, response, in_tokens
 
-        self.logger.info(f"Firing {len(input_batches)} structure batches in PARALLEL...")
-        
-        # Fire all batches simultaneously!
-        results = await asyncio.gather(*[
-            process_single_batch(i, batch_text) 
-            for i, batch_text in enumerate(input_batches)
-        ])
-
-        # Reassemble the results in chronological order
-        results.sort(key=lambda x: x[0])
-        
-        for i, response, in_tokens in results:
-            total_in_tokens += in_tokens
             if not response:
                 self.logger.warning(f"DEBUG: Batch {i + 1}/{len(input_batches)} returned no response, skipping.")
                 continue
-                
+
             total_out_tokens += len(response) // 4
             batch_structure = self._parse_structure_response(response)
             if batch_structure and batch_structure.get("topics"):
                 batch_structures.append(batch_structure)
-        # ---------------------------------------------------------
 
-        
+            if i < len(input_batches) - 1 and self.STRUCTURE_BATCH_SLEEP_SECONDS:
+                await asyncio.sleep(self.STRUCTURE_BATCH_SLEEP_SECONDS)
 
         llm_execution_time = time.time() - llm_start_time
         structure = self._merge_structure_batches(batch_structures)
@@ -180,16 +161,15 @@ class StructureController(BaseController):
         print("\n" + "="*50)
         print("PIPELINE DEBUG SUMMARY: STRUCTURE EXTRACTION")
         print("="*50)
-        print(f"Document Type           : {doc_type.upper()}")
-        print(f"Parsing Strategy        : {strategy}")
-        print(f"Chunks Processed        : {total_chunks}")
-        print(f"Text Reduction          : {len(full_text)} -> {len(llm_input)} chars")
-        print(f"Batches Sent            : {len(input_batches)}")
-        print(f"Approx In Tokens        : ~{total_in_tokens}")
-        print(f"Approx Out Tokens       : ~{total_out_tokens}")
-        print(f"Total Time              : {total_time:.2f} seconds")
-        print(f"Final Status            : {status} ({extracted_count} topics found)")
-        print(f"LLM Excecution Time     : {llm_execution_time}")
+        print(f"Document Type     : {doc_type.upper()}")
+        print(f"Parsing Strategy  : {strategy}")
+        print(f"Chunks Processed  : {total_chunks}")
+        print(f"Text Reduction    : {len(full_text)} -> {len(llm_input)} chars")
+        print(f"Batches Sent      : {len(input_batches)}")
+        print(f"Approx In Tokens  : ~{total_in_tokens}")
+        print(f"Approx Out Tokens : ~{total_out_tokens}")
+        print(f"Total Time        : {total_time:.2f} seconds")
+        print(f"Final Status      : {status} ({extracted_count} topics found)")
         print("="*50 + "\n")
 
         if extracted_count > 0:
