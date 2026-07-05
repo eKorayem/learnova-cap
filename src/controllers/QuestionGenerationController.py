@@ -238,6 +238,7 @@ class QuestionGenerationController(BaseController):
                 user_prompt=user_prompt,
                 response_schema=response_schema,
                 temperature=self.app_settings.QUESTION_TEMPERATURE,
+                max_output_tokens=8000
             )
 
             if not llm_response:
