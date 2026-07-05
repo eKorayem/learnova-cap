@@ -92,7 +92,8 @@ You must return ONLY valid JSON matching this schema exactly:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 response_schema=expected_schema,
-                temperature=settings.EXTRACTION_TEMPERATURE
+                temperature=settings.EXTRACTION_TEMPERATURE,
+                max_output_tokens=8000
             )
 
             if not response:

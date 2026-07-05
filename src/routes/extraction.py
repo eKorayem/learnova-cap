@@ -123,7 +123,7 @@ async def _extract_questions_background(app, project, payload: ExtractionWebhook
         # ==========================================
         controller = ExtractionController(generation_client=app.qgen_client)
         
-        CHUNKS_PER_BATCH = 15  
+        CHUNKS_PER_BATCH = 5
         batches = [filtered_chunks[i:i + CHUNKS_PER_BATCH] for i in range(0, len(filtered_chunks), CHUNKS_PER_BATCH)]
         logger.info(f"Executing LLM Extraction in {len(batches)} sequential Groq-safe batches...")
 
