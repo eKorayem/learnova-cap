@@ -69,9 +69,8 @@ class JinaProvider(LLMInterface):
 
     async def embed_batch_async(self, texts: list, batch_size: int = 100):
         """
-        Async batch embedding — fires all HTTP requests in parallel.
-        Must be called with 'await' from async context.
-        3612 chunks → 37 parallel requests → ~3-5 seconds total.
+        Async batch embedding — fires HTTP requests in parallel.
+        Includes Smart Retry with 60-second backoff for Jina 429 Rate Limits.
         """
         if not texts:
             return []
@@ -83,42 +82,59 @@ class JinaProvider(LLMInterface):
             for i in range(0, total, batch_size)
         ]
 
-        self.logger.info(
-            f"Jina: firing {len(batches)} parallel requests for {total} texts"
-        )
+        self.logger.info(f"Jina: firing {len(batches)} parallel requests for {total} texts")
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
 
-        async def fetch_batch(client, batch, idx):
-            try:
-                response = await client.post(
-                    f"{self.JINA_BASE_URL}/embeddings",
-                    headers=headers,
-                    json={
-                        "model": self.embedding_model_id,
-                        "input": batch,
-                        "dimensions": self.embedding_size
-                    }
-                )
-                if response.status_code != 200:
-                    self.logger.error(
-                        f"Jina batch {idx} error {response.status_code}: "
-                        f"{response.text[:200]}"
+        async def fetch_batch(client, batch, idx, max_retries=3):
+            retries = 0
+            while retries < max_retries:
+                try:
+                    response = await client.post(
+                        f"{self.JINA_BASE_URL}/embeddings",
+                        headers=headers,
+                        json={
+                            "model": self.embedding_model_id,
+                            "input": batch,
+                            "dimensions": self.embedding_size
+                        }
                     )
+                    
+                    # SUCCESS: We got the vectors!
+                    if response.status_code == 200:
+                        vectors = [item["embedding"] for item in response.json()["data"]]
+                        self.logger.info(f"Jina batch {idx + 1}/{len(batches)} ✓")
+                        return vectors
+                        
+                    # RATE LIMITED: Jina's 100k TPM limit hit. Sleep and retry.
+                    elif response.status_code == 429:
+                        retries += 1
+                        self.logger.warning(
+                            f"⚠️ Jina Rate Limit (429) hit on batch {idx+1}! "
+                            f"Sleeping 60 seconds... (Attempt {retries}/{max_retries})"
+                        )
+                        import asyncio
+                        await asyncio.sleep(60)
+                        continue # Restart the while loop
+                        
+                    # FATAL ERROR: 400 Bad Request, etc.
+                    else:
+                        self.logger.error(f"Jina batch {idx+1} error {response.status_code}: {response.text[:200]}")
+                        return None
+                        
+                except Exception as e:
+                    self.logger.error(f"Jina batch {idx+1} failed: {e}")
                     return None
-                vectors = [item["embedding"] for item in response.json()["data"]]
-                self.logger.info(f"Jina batch {idx + 1}/{len(batches)} ✓")
-                return vectors
-            except Exception as e:
-                self.logger.error(f"Jina batch {idx} failed: {e}")
-                return None
+                    
+            self.logger.error(f"Jina batch {idx+1} failed completely after {max_retries} retries.")
+            return None
 
         async with httpx.AsyncClient(timeout=60) as client:
-            # Free tier allows only 2 concurrent requests
-            # Semaphore limits parallelism without losing async benefits
+            # Free tier limits to 2 concurrent requests
+            import asyncio
             semaphore = asyncio.Semaphore(2)
 
             async def fetch_with_semaphore(batch, idx):
@@ -140,6 +156,9 @@ class JinaProvider(LLMInterface):
 
         self.logger.info(f"Jina complete — {len(all_vectors)} vectors")
         return all_vectors
-    
-    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict):
+
+    # =================================================================
+    # RESTORED: The required Abstract Method that prevented startup
+    # =================================================================
+    async def generate_structured_response(self, system_prompt: str, user_prompt: str, response_schema: dict, temperature: float = None):
         raise NotImplementedError("JinaProvider does not support text generation.")
