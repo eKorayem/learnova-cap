@@ -21,13 +21,13 @@ class StructureController(BaseController):
 
         self.BOOK_CHUNK_THRESHOLD = 30
         self.BOOK_CHAR_THRESHOLD = 30000
+
+        # ⚡ SPEED OPTIMIZATION 1: Micro-Batching
+        # 10,000 chars = ~2,500 tokens. Extremely fast processing per parallel worker.
+        self.MAX_LLM_INPUT_CHARS_PER_BATCH = 10000
         
-        # BUMPED TO 80,000 to fully utilize Claude's massive context window
-        self.MAX_LLM_INPUT_CHARS_PER_BATCH = getattr(
-            self.app_settings, "STRUCTURE_MAX_INPUT_CHARS_PER_BATCH", 80000
-        )
         self.MAX_STRUCTURE_BATCHES = getattr(
-            self.app_settings, "STRUCTURE_MAX_BATCHES", 15
+            self.app_settings, "STRUCTURE_MAX_BATCHES", 25 # Increased to allow more parallel workers
         )
         self.STRUCTURE_BATCH_SLEEP_SECONDS = getattr(
             self.app_settings, "STRUCTURE_BATCH_SLEEP_SECONDS", 0 
@@ -62,6 +62,24 @@ class StructureController(BaseController):
 
         text_blocks = []
         for c in chunks:
+            chunk_str = str(c.chunk_text)
+            
+            # ---------------------------------------------------------
+            # ☢️ THE TOC ASSASSIN (RESTORED) ☢️
+            # Drops Table of Contents pages before they hit the LLM to save time
+            # ---------------------------------------------------------
+            is_toc = False
+            chunk_lower = chunk_str.lower()
+            if "table of contents" in chunk_lower[:300] or "\ncontents\n" in chunk_lower[:300]:
+                is_toc = True
+            elif len(re.findall(r'(?:\.{3,}|\s{4,})\d+\s*$', chunk_str, re.MULTILINE)) >= 3:
+                is_toc = True
+                
+            if is_toc:
+                self.logger.info(f"☢️ ASSASSINATED TOC: Dropping chunk from page {c.chunk_metadata.get('page')}")
+                continue 
+            # ---------------------------------------------------------
+
             page_num = c.chunk_metadata.get('page')
             if page_num is not None:
                 text_blocks.append(f"--- [PAGE {page_num + 1}] ---\n{c.chunk_text}")
@@ -78,7 +96,6 @@ class StructureController(BaseController):
             llm_input_lines = []
             for c in chunks:
                 page_num = c.chunk_metadata.get('page', 0) + 1
-                # REMOVED [:400] TRUNCATION! Claude now reads 100% of the slide text
                 text_snippet = str(c.chunk_text).strip()
                 if text_snippet:
                     llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -94,7 +111,6 @@ class StructureController(BaseController):
                 llm_input_lines = []
                 for c in chunks:
                     page_num = c.chunk_metadata.get('page', 0) + 1
-                    # REMOVED [:400] TRUNCATION! Claude now reads 100% of the book text
                     text_snippet = str(c.chunk_text).strip()
                     if text_snippet:
                         llm_input_lines.append(f"--- [PAGE {page_num}] ---\n{text_snippet}")
@@ -122,42 +138,53 @@ class StructureController(BaseController):
         llm_start_time = time.time()
 
         # ---------------------------------------------------------
-        # THE FIX: ASYNC PARALLEL BATCH PROCESSING
+        # MAX SPEED PARALLEL BATCH PROCESSING (ZERO DELAY + SHIELDS)
         # ---------------------------------------------------------
         async def process_single_batch(i: int, batch_text: str):
-            batch_text_for_prompt = batch_text
-            if len(input_batches) > 1:
-                batch_text_for_prompt = (
-                    f"[This is part {i + 1} of {len(input_batches)} of a larger document. "
-                    f"Only extract topics that are actually present in this excerpt.]\n\n"
-                    f"{batch_text}"
+            try:
+                self.logger.info(f"🚀 Batch {i + 1}/{len(input_batches)}: FIRING to LLM...")
+                batch_text_for_prompt = batch_text
+                if len(input_batches) > 1:
+                    batch_text_for_prompt = (
+                        f"[This is part {i + 1} of {len(input_batches)} of a larger document. "
+                        f"Only extract topics that are actually present in this excerpt.]\n\n"
+                        f"{batch_text}"
+                    )
+
+                batch_prompt = prompt_builder(batch_text_for_prompt, max_topics)
+                in_tokens = len(batch_prompt) // 4
+                max_out = self._compute_max_output_tokens(len(batch_text), max_topics)
+
+                response = await self._generate_with_retry(
+                    prompt=batch_prompt,
+                    temperature=self.app_settings.STRUCTURE_TEMPERATURE,
+                    max_output_tokens=max_out,
                 )
+                
+                self.logger.info(f"✅ Batch {i + 1}/{len(input_batches)}: RETURNED successfully from LLM!")
+                return i, response, in_tokens
+                
+            except Exception as e:
+                self.logger.error(f"❌ Batch {i + 1}/{len(input_batches)} CRASHED: {str(e)}")
+                return i, None, 0
 
-            batch_prompt = prompt_builder(batch_text_for_prompt, max_topics)
-            in_tokens = len(batch_prompt) // 4
-            max_out = self._compute_max_output_tokens(len(batch_text), max_topics)
-
-            response = await self._generate_with_retry(
-                prompt=batch_prompt,
-                temperature=self.app_settings.STRUCTURE_TEMPERATURE,
-                max_output_tokens=max_out,
-            )
-            
-            # Return index 'i' so we can re-sort them chronologically later
-            return i, response, in_tokens
-
-        self.logger.info(f"Firing {len(input_batches)} structure batches in PARALLEL...")
+        self.logger.info(f"Firing {len(input_batches)} structure batches in PARALLEL at MAX SPEED...")
         
-        # Fire all batches simultaneously!
         results = await asyncio.gather(*[
             process_single_batch(i, batch_text) 
             for i, batch_text in enumerate(input_batches)
-        ])
+        ], return_exceptions=True)
 
-        # Reassemble the results in chronological order
-        results.sort(key=lambda x: x[0])
+        safe_results = []
+        for res in results:
+            if isinstance(res, Exception):
+                self.logger.error(f"🚨 Unhandled Exception caught by gather: {res}")
+            else:
+                safe_results.append(res)
+                
+        safe_results.sort(key=lambda x: x[0])
         
-        for i, response, in_tokens in results:
+        for i, response, in_tokens in safe_results:
             total_in_tokens += in_tokens
             if not response:
                 self.logger.warning(f"DEBUG: Batch {i + 1}/{len(input_batches)} returned no response, skipping.")
@@ -168,8 +195,6 @@ class StructureController(BaseController):
             if batch_structure and batch_structure.get("topics"):
                 batch_structures.append(batch_structure)
         # ---------------------------------------------------------
-
-        
 
         llm_execution_time = time.time() - llm_start_time
         structure = self._merge_structure_batches(batch_structures)
@@ -220,7 +245,6 @@ class StructureController(BaseController):
 
     def _compute_max_output_tokens(self, batch_char_len: int, max_topics: int = None) -> int:
         floor_tokens = 4000
-        # Claude 3.5 Sonnet allows 8192 tokens. Maxing this out prevents JSON truncation.
         ceiling_tokens = 8000 
         scaled = floor_tokens + (batch_char_len // 4)
         estimate = max(floor_tokens, min(ceiling_tokens, scaled))
@@ -261,17 +285,24 @@ class StructureController(BaseController):
         if not batch_structures:
             return self._create_fallback_structure()
 
-        merged_topics = []
-        seen_titles = set()
+        merged_topics_dict = {}
 
         for structure in batch_structures:
             for topic in structure.get("topics", []):
                 title = str(topic.get("title", "")).strip()
                 key = title.lower()
-                if not title or key in seen_titles:
+                if not title:
                     continue
-                seen_titles.add(key)
-                merged_topics.append(topic)
+                
+                if key in merged_topics_dict:
+                    existing_topic = merged_topics_dict[key]
+                    existing_subtitles = existing_topic.setdefault("subtitles", [])
+                    new_subtitles = topic.get("subtitles", [])
+                    existing_subtitles.extend(new_subtitles)
+                else:
+                    merged_topics_dict[key] = topic
+
+        merged_topics = list(merged_topics_dict.values())
 
         for idx, topic in enumerate(merged_topics):
             topic["order"] = idx
@@ -322,17 +353,6 @@ class StructureController(BaseController):
         line = line.replace("\u00a0", " ").replace("\u2002", " ").replace("\u2003", " ").replace("\u2009", " ")
         line = line.replace("\ufeff", " ")
         line = re.sub(r"\s+", " ", line.strip())
-        # NOTE: this used to unconditionally strip a leading "N " from every
-        # line (meant to clean up stray running-header page numbers), but that
-        # also silently deleted legitimate chapter numbering like "1 Introduction"
-        # -> "Introduction", while "1.1 Overview" kept its number untouched.
-        # That asymmetry is what caused every extracted topic to come out flat:
-        # subsections still looked numbered, but their parent chapters didn't,
-        # so the LLM had no numbering signal left to link them together.
-        # Only strip when it's clearly a stray page number: a lone number with
-        # nothing else meaningful following closely, i.e. the "word" right
-        # after the number is very short (<=2 chars) or is itself numeric —
-        # real chapter headings ("1 Introduction to Loops") don't look like that.
         stray_page_number = re.match(r"^\d{1,4}\s+(\S{1,2}\s|\d)", line)
         if stray_page_number:
             line = re.sub(r"^\d{1,4}\s+", "", line)
@@ -449,27 +469,16 @@ class StructureController(BaseController):
         return False
 
     def _detect_heading_level(self, line: str) -> int:
-        """Determines whether a heading line looks like a top-level topic (1)
-        or a subsection (2), based on numbering/keyword patterns. This runs
-        BEFORE any text is sent to the LLM so the hierarchy signal survives
-        even when a chapter title itself has no numbering."""
-        # Explicit chapter/section/part keywords -> always top-level
         if re.match(r"^(chapter|part|unit|module|الفصل|الباب|الوحدة|الجزء)\s+[\d\wأ-ي]+", line, re.IGNORECASE):
             return 1
-        # Roman numerals -> top-level
         if re.match(r"^[IVXLCDM]+\.\s+[A-Z]", line):
             return 1
-        # Dotted numbering like "1.1", "2.3.1", "1.1.1" -> subsection
         if re.match(r"^\d+(\.\d+){1,}\.?\s+", line):
             return 2
-        # Single-number numbering like "1 Introduction" or "1. Introduction" -> top-level
         if re.match(r"^\d+\.?\s+[A-Zأ-ي]", line):
             return 1
-        # "Section"/"Topic"/"Lecture" keyword followed by a number -> treat as subsection
-        # (these usually appear *within* a chapter, e.g. "Section 2: Loops")
         if re.match(r"^(section|topic|lecture|الدرس)\s+[\d\wأ-ي]+", line, re.IGNORECASE):
             return 2
-        # Unknown pattern (no explicit numbering) -> caller decides using context
         return 0
 
     def _extract_headings_only(self, text: str, doc_type: str) -> str:
@@ -479,7 +488,7 @@ class StructureController(BaseController):
         consecutive_non_headings = 0
         prev_blank = True
         current_page = None
-        last_level_emitted = None  # tracks the level of the previously emitted heading
+        last_level_emitted = None
 
         for i, raw in enumerate(lines):
             line = self._normalize_line(raw)
@@ -533,16 +542,8 @@ class StructureController(BaseController):
                 key = line.lower()
                 if key not in seen:
                     seen.add(key)
-
                     level = self._detect_heading_level(line)
                     if level == 0:
-                        # No explicit numbering/keyword found. Heuristic: a
-                        # heading-like line immediately following another
-                        # heading-like line (no blank line, no unrelated
-                        # content in between) is much more likely to be a
-                        # subsection than a new chapter — real chapter
-                        # breaks in source material almost always have some
-                        # body text or a page break between them.
                         if last_level_emitted is not None and not prev_blank:
                             level = 2
                         else:
@@ -561,53 +562,35 @@ class StructureController(BaseController):
 
         return "\n".join(heading_lines)
 
-    # NEW EXHAUSTIVE PROMPT TO FORCE FULL EXTRACTION
+    # ⚡ SPEED OPTIMIZATION 2: Output Minimization
+    # Changed "one sentence description" to "short 3-6 word summary".
     def _build_full_text_prompt(self, text: str, max_topics: int = None) -> str:
         max_constraint = f"\n- LIMIT: Extract at most {max_topics} top-level topics." if max_topics else ""
-        return f"""You are an expert academic parser. Read the following document excerpt and extract its COMPLETE structural outline as a TWO-LEVEL hierarchy: top-level topics, each containing one or more subtitles.
+        return f"""You are an expert academic parser. Read the document excerpt and extract its COMPLETE structural outline strictly as a TWO-LEVEL hierarchy: Top-Level Topics and Subtitles.
 
 CRITICAL RULES:
-1. EXHAUSTIVE COVERAGE: don't skip distinct concepts — every concept discussed in the text must appear somewhere in the output (as a topic OR as a subtitle of one).
-2. DO NOT FLATTEN: a typical lecture/chapter excerpt has roughly 3-8 top-level topics, each with 2-6 subtitles. If you find yourself about to create more than ~10 top-level topics, STOP — you are almost certainly listing specific concepts that should be subtitles of a broader topic instead. Ask yourself "is this a broad subject area, or one specific point within a broader subject?" — broad subject areas become topics, specific points become subtitles.
-3. A page/slide title, a bolded heading, or a sentence introducing a new broad subject is usually a TOPIC. A specific definition, example, sub-case, or supporting detail discussed under that subject is usually a SUBTITLE of it.
-4. Preserve exact title wording from the text.
-5. You MUST use the numbers inside the --- [PAGE X] --- tags to determine 'page_start' and 'page_end' for both topics and subtitles.
-6. Output MUST be valid JSON matching the schema exactly.
+1. STRICTLY 2 LEVELS ONLY: Our system only supports Top-Level Topics and Subtitles.
+2. THE TOC TRAP (CRITICAL): LLMs often mistakenly extract the "Table of Contents" instead of the actual book content. You must completely IGNORE any Table of Contents, Agenda, or Index pages. Only extract topics from the ACTUAL body text of the chapters. If the excerpt is entirely a Table of Contents, return an empty topics array [].
+3. FLATTEN DEEP HIERARCHIES: If the text has 3 or more levels, flatten it. Ignore sub-subsections.
+4. EXHAUSTIVE COVERAGE: Don't skip distinct concepts.
+5. Output MUST be valid JSON matching the schema exactly.
 {max_constraint}
-
-WORKED EXAMPLE (this shows the level of nesting expected — do not copy this content, it's only to illustrate the pattern):
-Given text about loops covering: what a for-loop is, a for-loop syntax example, what a while-loop is, and while-loop vs for-loop differences — the CORRECT output nests all four under one topic:
-{{
-  "topics": [
-    {{
-      "title": "Loops",
-      "description": "Introduces iteration constructs in the language.",
-      "order": 0, "page_start": 10, "page_end": 14,
-      "subtitles": [
-        {{"title": "For-Loop Basics", "description": "What a for-loop is and when to use it.", "order": 0, "page_start": 10, "page_end": 11}},
-        {{"title": "For-Loop Syntax Example", "description": "A worked example of for-loop syntax.", "order": 1, "page_start": 11, "page_end": 12}},
-        {{"title": "While-Loop Basics", "description": "What a while-loop is and when to use it.", "order": 2, "page_start": 12, "page_end": 13}},
-        {{"title": "For vs While", "description": "Comparison of the two loop types.", "order": 3, "page_start": 13, "page_end": 14}}
-      ]
-    }}
-  ]
-}}
-The INCORRECT (flat) version would instead output four separate top-level topics ("For-Loop Basics", "For-Loop Syntax Example", "While-Loop Basics", "For vs While") with empty "subtitles" — do not do this.
 
 DOCUMENT TEXT:
 {text}
 
-OUTPUT JSON SCHEMA (strict - no extra fields):
+OUTPUT JSON SCHEMA:
 {{
+  "ignored_table_of_contents": true,
   "topics": [
     {{
       "title": "exact title",
-      "description": "one sentence description",
+      "description": "short 3-6 word summary",
       "order": 0,
       "page_start": 1,
       "page_end": 5,
       "subtitles": [
-        {{"title": "subtitle", "description": "one sentence", "order": 0, "page_start": 1, "page_end": 5}}
+        {{"title": "subtitle", "description": "short 3-6 word summary", "order": 0, "page_start": 1, "page_end": 5}}
       ]
     }}
   ]
@@ -620,36 +603,32 @@ Return ONLY the JSON object, no markdown, no explanations."""
         return f"""You are reconstructing a textbook's hierarchical structure from extracted headings.
 
 Each heading line below is prefixed with a tag showing its detected level:
-- "[L1]" = a top-level heading (chapter/part/unit, or a numbered heading with no decimal like "1 Introduction" or "3. Recursion")
-- "[L2]" = a subsection heading (decimal-numbered like "1.1", "2.3.1", a "Section"/"Topic" line, or an untagged heading that immediately followed another heading with no body text between them)
+- "[L1]" = a top-level heading
+- "[L2]" = a subsection heading
 
 CRITICAL RULES:
-1. DO NOT STOP EARLY - this is a full book, read ALL headings to the end
-2. Every [L2] line becomes a "subtitle" nested under the nearest preceding [L1] line. Every [L1] line becomes a top-level "topic".
-3. The [L1]/[L2] tags are a strong hint but not infallible — if an [L2] line is clearly the start of a brand new, unrelated major subject (not a subsection of anything discussed so far), you may promote it to a topic instead. Likewise, if two consecutive [L1] lines are obviously the same subject split across a page break, you may merge them.
-4. Never leave a topic with zero subtitles if there are 2+ following [L2] lines that clearly belong under it — nest them.
-5. Ignore: citations, academic years, standalone variables, page numbers.
-6. Preserve exact title wording in original language (English or Arabic). Strip the "[L1]"/"[L2]" tag itself from the title you output — it is metadata for you only, not part of the title.
-7. Write a brief 1-sentence description for each item.
-8. Output MUST be valid JSON matching the schema exactly.
-9. Extract 'page_start' and 'page_end' integers from the "(Page X)" labels when present.
-10. 'page_end' is typically the page before the next topic/subtitle starts. If unknown, output null.
+1. STRICTLY 2 LEVELS ONLY: Our system only supports Top-Level Topics (L1) and Subtitles (L2).
+2. FLATTEN DEEP HIERARCHIES: Ignore deep sub-subsections (e.g., 1.1.1 or 1.1.2) or combine them into the description of their parent L2 subtitle.
+3. THE TOC TRAP (CRITICAL): Completely IGNORE the Table of Contents, Agenda, or Index. Only extract topics from the ACTUAL body text headings.
+4. DO NOT STOP EARLY - this is a full book, read ALL headings to the end.
+5. Output MUST be valid JSON matching the schema exactly.
 {max_constraint}
 
 EXTRACTED HEADINGS:
 {text}
 
-OUTPUT JSON SCHEMA (strict - no extra fields):
+OUTPUT JSON SCHEMA:
 {{
+  "ignored_table_of_contents": true,
   "topics": [
     {{
       "title": "exact title",
-      "description": "one sentence description",
+      "description": "short 3-6 word summary",
       "order": 0,
       "page_start": 1,
       "page_end": 5,
       "subtitles": [
-        {{"title": "subtitle", "description": "one sentence", "order": 0, "page_start": 1, "page_end": 5}}
+        {{"title": "subtitle", "description": "short 3-6 word summary", "order": 0, "page_start": 1, "page_end": 5}}
       ]
     }}
   ]
