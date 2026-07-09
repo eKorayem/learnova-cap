@@ -65,7 +65,7 @@ class StructureController(BaseController):
             chunk_str = str(c.chunk_text)
             
             # ---------------------------------------------------------
-            # ☢️ THE TOC ASSASSIN (RESTORED) ☢️
+            # THE TOC ASSASSIN (RESTORED)
             # Drops Table of Contents pages before they hit the LLM to save time
             # ---------------------------------------------------------
             is_toc = False
@@ -76,7 +76,7 @@ class StructureController(BaseController):
                 is_toc = True
                 
             if is_toc:
-                self.logger.info(f"☢️ ASSASSINATED TOC: Dropping chunk from page {c.chunk_metadata.get('page')}")
+                self.logger.info(f"ASSASSINATED TOC: Dropping chunk from page {c.chunk_metadata.get('page')}")
                 continue 
             # ---------------------------------------------------------
 
@@ -161,11 +161,11 @@ class StructureController(BaseController):
                     max_output_tokens=max_out,
                 )
                 
-                self.logger.info(f"✅ Batch {i + 1}/{len(input_batches)}: RETURNED successfully from LLM!")
+                self.logger.info(f"Batch {i + 1}/{len(input_batches)}: RETURNED successfully from LLM!")
                 return i, response, in_tokens
                 
             except Exception as e:
-                self.logger.error(f"❌ Batch {i + 1}/{len(input_batches)} CRASHED: {str(e)}")
+                self.logger.error(f"Batch {i + 1}/{len(input_batches)} CRASHED: {str(e)}")
                 return i, None, 0
 
         self.logger.info(f"Firing {len(input_batches)} structure batches in PARALLEL at MAX SPEED...")
@@ -178,7 +178,7 @@ class StructureController(BaseController):
         safe_results = []
         for res in results:
             if isinstance(res, Exception):
-                self.logger.error(f"🚨 Unhandled Exception caught by gather: {res}")
+                self.logger.error(f"Unhandled Exception caught by gather: {res}")
             else:
                 safe_results.append(res)
                 
