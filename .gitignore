@@ -5,3 +5,4 @@ project_code.md
 test_structure_debug.py
 generate_keys_for_sawagger.py
 test_e2e_webhook.py
+.vscode
