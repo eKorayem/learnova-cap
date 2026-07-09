@@ -24,18 +24,18 @@ The engine applies a fully decoupled **Layered Abstract Architecture** leveragin
 
 ### The Big Picture
 
-![System Architecture](Arch.png)
+![System Architecture](Assets/Arch.png)
 
 ### System Infrastructure Graph
 
-![alt text](SystemInfrastructure.png)
+![alt text](Assets/SystemInfrastructure.png)
 
 
 ## Cryptographic Integration Security
 
 To secure the academic workflows, communications between the central monolithic backend and this AI container utilize a strict **HMAC SHA256 Signature Verification Layer**. This is managed natively via FastAPI dependencies.
 
-![System Architecture](Crypto.png)
+![System Architecture](Assets/Crypto.png)
 
 The matching verification payload is calculated deterministically to prevent man-in-the-middle tampering:
 
