@@ -153,13 +153,15 @@ class QuestionGenerationController(BaseController):
         self,
         chunk_model: ChunkModel,
         project_id: str,
-        topic_title: str
+        topic_title: str,
+        page_start: Optional[int] = None,
+        page_end: Optional[int] = None
     ) -> Optional[str]:
 
         chunks = await chunk_model.get_chunks_by_project_id(
             project_id=project_id,
             page_no=1,
-            page_size=1000,
+            page_size=10000, # Get all chunks
             chunk_type="question"
         )
 
@@ -168,46 +170,57 @@ class QuestionGenerationController(BaseController):
             return None
 
         chunks = sorted(chunks, key=lambda c: c.chunk_order)
-
-        topic_keywords = [
-            word.lower()
-            for word in topic_title.split()
-            if len(word) > 3
-        ]
-
         relevant_chunks = []
-        if topic_keywords:
-            scored_chunks = []
+
+        # ==========================================
+        # PATH A: EXACT PAGE RANGE (THE FAST/ACCURATE PATH)
+        # ==========================================
+        if page_start is not None and page_end is not None:
+            self.logger.info(f"Using strict page boundaries: {page_start} to {page_end} for topic '{topic_title}'")
             for chunk in chunks:
-                chunk_lower = chunk.chunk_text.lower()
-                score = sum(1 for keyword in topic_keywords if keyword in chunk_lower)
-                if score > 0:
-                    scored_chunks.append((score, chunk))
+                # Langchain stores page numbers in metadata (usually 0-indexed, so we might need to adjust based on how it was saved)
+                chunk_page = chunk.chunk_metadata.get("page") 
+                if chunk_page is not None:
+                    # PyMuPDF pages are 0-indexed, so add 1 if your UI displays 1-indexed pages
+                    actual_page = int(chunk_page) + 1 
+                    if page_start <= actual_page <= page_end:
+                        relevant_chunks.append(chunk)
 
-            scored_chunks.sort(key=lambda x: x[0], reverse=True)
-            relevant_chunks = [item[1] for item in scored_chunks[:20]]
-
+        # ==========================================
+        # PATH B: KEYWORD SCORING (THE FALLBACK PATH)
+        # ==========================================
+        # If no chunks were found by page, OR if page numbers were missing (manually added topic)
         if not relevant_chunks:
-            self.logger.warning(
-                f"No relevant chunks found for topic '{topic_title}', "
-                f"falling back to first 10 chunks"
-            )
+            self.logger.warning(f"Falling back to keyword search for topic '{topic_title}'")
+            topic_keywords = [word.lower() for word in topic_title.split() if len(word) > 3]
+            
+            if topic_keywords:
+                scored_chunks = []
+                for chunk in chunks:
+                    chunk_lower = chunk.chunk_text.lower()
+                    score = sum(1 for keyword in topic_keywords if keyword in chunk_lower)
+                    if score > 0:
+                        scored_chunks.append((score, chunk))
+
+                scored_chunks.sort(key=lambda x: x[0], reverse=True)
+                relevant_chunks = [item[1] for item in scored_chunks[:20]]
+
+        # ==========================================
+        # FINAL SAFETY NET
+        # ==========================================
+        if not relevant_chunks:
+            self.logger.warning(f"No relevant chunks found, falling back to first 10 chunks.")
             relevant_chunks = chunks[:10]
         else:
             relevant_chunks = sorted(relevant_chunks, key=lambda c: c.chunk_order)
 
         full_text = "\n\n".join([c.chunk_text for c in relevant_chunks])
 
+        # Enforce token limits
         max_chars = self.app_settings.QUESTION_CHUNK_SIZE * 10
         if len(full_text) > max_chars:
             full_text = full_text[:max_chars]
-            self.logger.info(f"Truncated topic content to {max_chars} characters")
-
-        self.logger.info(
-            f"Topic '{topic_title}': {len(relevant_chunks)} relevant chunks, "
-            f"{len(full_text)} characters"
-        )
-
+            
         return full_text
 
     # =============================================================

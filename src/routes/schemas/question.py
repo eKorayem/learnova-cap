@@ -14,6 +14,8 @@ class QuestionConfig(BaseModel):
 class TopicQuestionRequest(BaseModel):
     topic_id: int
     topic_title: str
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
     question_configs: List[QuestionConfig]
 
 
