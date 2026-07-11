@@ -14,6 +14,8 @@ from routes.grading import grading_router
 
 from routes.extraction import extraction_router
 
+from routes.presentation import presentation_router
+
 app = FastAPI()
 
 # Setup Prometheus metrics
@@ -89,3 +91,4 @@ app.include_router(ai.ai_router)
 app.include_router(question_router)
 app.include_router(grading_router)
 app.include_router(extraction_router)
+app.include_router(presentation_router)

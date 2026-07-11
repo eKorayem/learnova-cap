@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     GRADING_BACKEND: str = "OPENROUTER"
     GRADING_MODEL_ID: str = "google/gemini-2.5-flash"
 
+
+    # ======================= Presentation & Summary Config =======================
+    PRESENTATION_BACKEND: str = "OPENROUTER"
+    PRESENTATION_MODEL_ID: str = "google/gemini-2.5-flash"
+    SUMMARY_BACKEND: str = "OPENROUTER"
+    SUMMARY_MODEL_ID: str = "google/gemini-2.5-flash"
+
+    
     # ======================= VectorDB CONFIG =======================
 
     VECTOR_DB_BACKEND: str
@@ -111,6 +119,7 @@ class Settings(BaseSettings):
 
     # ============================ Webhook Configurations ============================
     LEARNOVA_BACKEND_URL: str = "https://tightness-pavestone-displease.ngrok-free.dev/"
+
 
 
 def get_settings():
