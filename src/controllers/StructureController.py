@@ -105,14 +105,13 @@ class StructureController(BaseController):
         return normalized, "completed" if normalized else "failed"
 
     # =============================================================
-    # 2. DETERMINISTIC MATH ENGINE (SORTING & BOUNDARIES)
+    # 2. DETERMINISTIC MATH ENGINE (HARD-CLAMPING BOUNDS)
     # =============================================================
 
     def _enforce_strict_hierarchy_and_bounds(self, structure: dict, last_page: int) -> dict:
         """
-        Enforces 2 levels, perfectly chronological sorting, and logical bounds:
-        - Topic ends where the next Topic begins.
-        - Subtitle ends where the next Subtitle begins.
+        Enforces perfectly chronological sorting and strictly clamps bounds 
+        so it is mathematically impossible to fail the backend validation.
         """
         if not structure or 'topics' not in structure:
             return structure
@@ -138,31 +137,44 @@ class StructureController(BaseController):
         if not valid_topics:
             return {"topics": []}
 
-        # 2. Chronological Sorting (Prevents "Heading 4 then Heading 3")
+        # 2. Sort Parents Chronologically
         valid_topics.sort(key=lambda x: x['page_start'])
-        for t in valid_topics:
-            t['subtitles'].sort(key=lambda x: x['page_start'])
-            # Ensure parent topic starts no later than its first subtitle
-            if t['subtitles'] and t['subtitles'][0]['page_start'] < t['page_start']:
-                t['page_start'] = t['subtitles'][0]['page_start']
 
-        # 3. Calculate Perfect Page Ends (Topic Level)
+        # 3. Pull Parent Start Backward to Envelope Earliest Subtitle (if hallucinated earlier)
+        for t in valid_topics:
+            if t['subtitles']:
+                t['subtitles'].sort(key=lambda x: x['page_start'])
+                if t['subtitles'][0]['page_start'] < t['page_start']:
+                    t['page_start'] = t['subtitles'][0]['page_start']
+
+        # Re-sort just in case pulling them backward changed their order
+        valid_topics.sort(key=lambda x: x['page_start'])
+
+        # 4. Calculate Parent End
         for i in range(len(valid_topics)):
             curr_start = valid_topics[i]['page_start']
             next_start = valid_topics[i + 1]['page_start'] if i + 1 < len(valid_topics) else (last_page + 1)
-            
             valid_topics[i]['page_end'] = max(curr_start, next_start - 1)
 
-        # 4. Calculate Perfect Page Ends (Subtitle Level)
+        # 5. STRICT SUBTITLE CLAMPING (Backend 400 Prevention)
         for t in valid_topics:
-            subs = t['subtitles']
+            parent_start = t['page_start']
             parent_end = t['page_end']
+            subs = t['subtitles']
             
             for j in range(len(subs)):
-                curr_sub_start = subs[j]['page_start']
-                next_sub_start = subs[j + 1]['page_start'] if j + 1 < len(subs) else (parent_end + 1)
+                # CLAMP START: Force subtitle start to physically sit inside parent
+                clamped_start = max(parent_start, min(subs[j]['page_start'], parent_end))
+                subs[j]['page_start'] = clamped_start
                 
-                subs[j]['page_end'] = max(curr_sub_start, min(next_sub_start - 1, parent_end))
+                # Determine where the next subtitle begins
+                next_start = parent_end + 1
+                if j + 1 < len(subs):
+                    next_start = max(parent_start, min(subs[j + 1]['page_start'], parent_end))
+                
+                # CLAMP END: Force subtitle end to sit before the next subtitle and inside parent
+                clamped_end = max(clamped_start, min(next_start - 1, parent_end))
+                subs[j]['page_end'] = clamped_end
 
         return {"topics": valid_topics}
 
@@ -177,20 +189,18 @@ class StructureController(BaseController):
     # =============================================================
 
     def _identify_toc_pages(self, chunks: list) -> set:
-        """Flags TOC pages so their headings are strictly ignored."""
         toc_pages = set()
         toc_keywords = ["table of contents", "\ncontents\n", "قائمة المحتويات", "فهرس", "محتويات"]
         
         for c in chunks:
             page = int(c.chunk_metadata.get('page', 0)) + 1
-            if page > 25: continue # TOC is rarely past page 25
+            if page > 25: continue
                 
             text_lower = c.chunk_text.lower()
             if any(kw in text_lower[:500] for kw in toc_keywords):
                 toc_pages.add(page)
                 continue
                 
-            # Dot leader detection (e.g. "Chapter 1 ....... 10")
             dot_leaders = len(re.findall(r'(?:\.{3,}|\s{4,}|_{3,})\d+\s*$', c.chunk_text, re.MULTILINE))
             if dot_leaders >= 3:
                 toc_pages.add(page)
@@ -198,13 +208,11 @@ class StructureController(BaseController):
         return toc_pages
 
     def _extract_headings_only(self, text: str, doc_type: str, toc_pages: set) -> str:
-        """Extracts text that looks like a heading, appending its physical page number."""
         lines = text.split("\n")
         heading_lines = []
         current_page = 1
 
         for raw in lines:
-            # Clean formatting and trailing numbers
             line = re.sub(r"\s+", " ", raw.replace("\u00a0", " ").strip())
             line = re.sub(r"\s+\d{1,4}$", "", line)
             line = re.sub(r"^\d{1,4}\s+", "", line).strip()
@@ -214,12 +222,10 @@ class StructureController(BaseController):
                 current_page = int(page_match.group(1))
                 continue
 
-            # SKIP QUARANTINED TOC PAGES & NOISE
             if current_page in toc_pages or not line or self._is_noise(line):
                 continue
 
             is_heading = False
-            # Universal numbered/labeled headings
             if re.match(r"^(chapter|section|part|unit|topic|module|lecture|الفصل|الباب|الوحدة|الدرس|الجزء)\s+[\d\wأ-ي]+", line, re.IGNORECASE):
                 is_heading = True
             elif re.match(r"^\d+(\.\d+)*\.?\s+[A-Zأ-ي]", line):
@@ -227,13 +233,11 @@ class StructureController(BaseController):
             elif re.match(r"^[IVXLCDM]+\.\s+[A-Z]", line):
                 is_heading = True
             elif doc_type == "lecture" and len(line.split()) >= 2:
-                # Capitalization density for slides
                 words = line.split()
                 if sum(1 for w in words if w and w[0].isupper()) / len(words) >= 0.6: 
                     is_heading = True
 
             if is_heading and len(line.split()) <= 15:
-                # Determine level (L1 = Topic, L2 = Subtitle)
                 is_l1 = bool(re.match(r"^(chapter|part|unit|module|الفصل|الباب|الوحدة|الجزء)\s+", line, re.IGNORECASE) or 
                              re.match(r"^[IVXLCDM]+\.\s+[A-Z]", line) or 
                              re.match(r"^\d+\.?\s+[A-Zأ-ي]", line))
@@ -246,12 +250,8 @@ class StructureController(BaseController):
     def _is_noise(self, line: str) -> bool:
         if len(line) < 3 or len(line) > 120: return True
         if re.fullmatch(r"\d+(?:\.\d+)*", line) or re.search(r"[=+\-*/<>$≈≠≤≥∑∫∞]", line): return True
-        
-        # Too many symbols, not enough letters
         alpha_count = sum(1 for c in line if c.isalpha())
         if len(line) > 0 and (alpha_count / len(line)) < 0.5: return True
-        
-        # Questions are not headings
         if line.endswith("?") or line.endswith("؟"): return True
         return False
 
@@ -343,7 +343,6 @@ OUTPUT JSON SCHEMA:
 
         topic_counter = 0
 
-        # Everything is already perfectly sorted, so we just map to flat dicts
         for topic in raw_structure["topics"]:
             topic_counter += 1
             topic_temp_id = f"topic_{topic_counter}"
