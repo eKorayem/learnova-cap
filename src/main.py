@@ -11,10 +11,9 @@ from stores.llm.templates.template_parser import TemplateParser
 from utils.metrics import setup_metrics
 
 from routes.grading import grading_router
-
 from routes.extraction import extraction_router
-
 from routes.presentation import presentation_router
+from routes.summary import summary_router
 
 app = FastAPI()
 
@@ -56,6 +55,10 @@ async def startup_span():
     app.grading_client = llm_provider_factory.create(provider=settings.GRADING_BACKEND)
     app.grading_client.set_generation_model(model_id=settings.GRADING_MODEL_ID)
     
+    # ── 5. SUMMARY GENERATION CLIENT ────────────────────────────
+    app.summary_client = llm_provider_factory.create(provider=settings.SUMMARY_BACKEND)
+    app.summary_client.set_generation_model(model_id=settings.SUMMARY_MODEL_ID)
+
     # ── RAG: Embedding Client ───────────────────────────────────
     app.embedding_client = llm_provider_factory.create(provider=settings.EMBEDDING_BACKEND)
     app.embedding_client.set_embedding_model(
@@ -92,3 +95,4 @@ app.include_router(question_router)
 app.include_router(grading_router)
 app.include_router(extraction_router)
 app.include_router(presentation_router)
+app.include_router(summary_router)
